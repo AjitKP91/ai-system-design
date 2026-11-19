@@ -3001,6 +3001,8 @@ An eval is a test that:
 - Runs a prompt against the model
 - Scores the output against an expected answer or some quality metric
 
+The eval dataset is the foundation. It starts as a handful of curated examples and grows by mining real production failures from our traces (see [Observability](#observability-in-ai-systems)). We keep it versioned in git, and every time we find a new bug, we add it as a regression test so it can never silently come back.
+
 Types of evals:
 
 - **Exact match:** For fact-based questions where the answer is known.
@@ -3014,9 +3016,14 @@ We run evals:
 - Every time we change the model
 - Every time we change the system architecture
 
+Evals run in two places:
+
+- **Offline eval:** run the model against a fixed, versioned dataset. This is the CI gate - a change must not regress the eval score before it ships.
+- **Online eval:** measure quality in production with A/B tests, user feedback (thumbs up/down), and canary or shadow rollouts on a small slice of traffic before full rollout.
+
 Without evals, we are flying blind. A change that "feels" better can actually make things worse for some user segment.
 
-Tools: OpenAI Evals, Promptfoo, Braintrust, Ragas (specifically for RAG).
+Tools: OpenAI Evals, Promptfoo, Braintrust, Ragas (specifically for RAG). Ragas scores RAG with metrics that separate the two failure points: **faithfulness** and **answer relevancy** measure generation quality, while **context precision** and **context recall** measure retrieval quality.
 
 ### LLM as a Judge
 
@@ -3032,11 +3039,12 @@ There are four common types:
 But, here is the catch. The judge has biases, and we must handle them:
 
 - **Position bias:** In pairwise comparison, the judge often prefers the answer that comes first. We swap the order, run twice, and average.
-- **Verbosity bias:** The judge often prefers longer answers. We tell it not to.
+- **Verbosity bias:** The judge often prefers longer answers. We instruct it to ignore length and, where possible, normalize for answer length - instructions alone reduce but do not remove this bias.
 - **Style bias:** The judge rewards a writing style (like bullet points) over actual content. We tell it exactly what style is expected.
 - **Self-preference bias:** The judge prefers answers from its own model family. We use a judge from a different family, or a panel of judges.
+- **Limited reasoning:** On hard math or logic problems the judge is itself a weak grader, so its score can be wrong even with no bias. We use reference answers or a stronger judge.
 
-Before trusting a judge in production, we check its scores against a small set of human-labeled examples. If the judge and the humans agree most of the time, we can trust it at scale.
+Before trusting a judge in production, we check its scores against a small set of human-labeled examples. Judges reach roughly 80% agreement with humans ([Zheng et al., 2023](https://arxiv.org/abs/2306.05685)) - reliable enough for tracking trends and relative comparisons (model A vs B), but weaker for absolute correctness, so we periodically re-calibrate against humans.
 
 ### Evaluating AI Agents
 
