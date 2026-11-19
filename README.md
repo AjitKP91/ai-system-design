@@ -272,6 +272,8 @@ This AI System Design guide is for:
 - **Software Engineers** who want to move into AI Engineering.
 - **Backend, Mobile, and Frontend Developers** who want to build AI-powered products.
 - **Machine Learning Engineers and Data Scientists** who want to take models to production.
+- **MLOps, LLMOps, and AI Platform Engineers** who run the serving, scaling, and cost side of AI systems.
+- **Forward Deployed Engineers and AI Solutions Architects** who design AI systems with and for customers.
 - **Engineering Managers, Tech Leads, and Architects** who want to understand how modern AI systems are built.
 - **Students and freshers** who want to start a career in AI.
 - **Anyone preparing for AI System Design interviews**, AI Engineer interviews, and GenAI Engineer interviews.
