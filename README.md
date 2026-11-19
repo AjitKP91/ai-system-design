@@ -2585,11 +2585,11 @@ Before sending media to the LLM, we usually:
 
 - Resize images (LLMs only need a certain resolution)
 - Convert formats (mp3 to wav for audio, mp4 to frames for video)
-- Compress to reduce token cost (some image models charge per pixel)
+- Compress to reduce token cost (image models charge by resolution, in tiles, not strictly per pixel)
 
 ### Token Cost
 
-Images, audio, and video take many more tokens than text. A single high-resolution image can cost 1500 to 3000 tokens. A 1-minute audio clip can cost 1000 tokens. Cost tracking has to take this into account. We have a detailed blog on [How does a Vision-Language Model (VLM) work?](https://outcomeschool.com/blog/vision-language-model-vlm) that explains how an image is turned into tokens that the LLM can read.
+Images, audio, and video take many more tokens than text. A single high-resolution image can cost roughly 1000 to 3000 tokens depending on resolution and provider (models tile the image by resolution rather than charging per pixel). A 1-minute audio clip costs around 1900 tokens (Gemini counts audio at about 32 tokens per second). Cost tracking has to take this into account. We have a detailed blog on [How does a Vision-Language Model (VLM) work?](https://outcomeschool.com/blog/vision-language-model-vlm) that explains how an image is turned into tokens that the LLM can read.
 
 ### Output Modalities
 
@@ -2645,7 +2645,7 @@ We also have a detailed blog on [How does voicemail and answering machine detect
 
 We have a detailed blog on [How does an outbound calling voice agent work?](https://outcomeschool.com/blog/outbound-calling-voice-agent) that explains how the agent decides whom to call and when, how the call reaches a phone through a telephony provider, how it tells a human from a voicemail, how it opens and runs the conversation, and how every call ends with a saved outcome and a plan for the next try.
 
-Modern providers expose **Realtime APIs** that bundle all three: OpenAI Realtime API, Amazon Polly Bidirectional Streaming, Deepgram Voice Agent, Inworld, Soniox, x.ai Voice. These collapse STT, LLM, and TTS into a single low-latency pipeline.
+Modern providers expose **Realtime APIs** that bundle all three: OpenAI Realtime API, Google Gemini Live API, Amazon Nova Sonic, Deepgram Voice Agent, and Inworld. These collapse STT, LLM, and TTS into a single low-latency pipeline. Some (OpenAI Realtime, Nova Sonic, Gemini Live) are true unified speech-to-speech models; others (Deepgram, Inworld) orchestrate separate STT, LLM, and TTS behind one streaming connection.
 
 Latency targets in voice AI are tight. End-to-end speech-to-speech latency under 800 ms feels conversational. Above 1.5 s feels broken. This is much tighter than text chat.
 
