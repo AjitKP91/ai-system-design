@@ -2208,15 +2208,16 @@ Example: We are building a resume parser. We want the LLM to read a resume and r
 
 If we just ask the LLM "give me JSON", sometimes it returns proper JSON, sometimes it adds extra text like "Sure, here is the JSON:", and sometimes it returns broken JSON.
 
-To fix this, modern APIs support **structured output** (also called JSON mode or constrained decoding):
+To fix this, modern inference APIs offer two related but different features:
 
-- We send the schema we want.
-- The inference server forces the model to output only valid JSON that matches the schema.
-- We get back a guaranteed-parseable response.
+- **JSON mode** guarantees the output is syntactically valid JSON, but *not* that it follows our schema - fields, types, or enums can still be wrong or missing.
+- **Structured Outputs / constrained (guided) decoding** takes a schema and guarantees the output conforms to it - the right fields, types, and enums.
 
-Examples: OpenAI's `response_format` with JSON Schema, Anthropic's tool-use mode, vLLM's guided decoding, Outlines library.
+The way constrained decoding works: the server compiles the schema into a grammar and, at each step of decoding, masks out any token that would violate it, so only schema-valid tokens can be generated. Invalid JSON is never produced, rather than repaired afterward.
 
-The problem is solved. Now, the next step in our pipeline can trust the JSON without writing fragile parsers.
+Examples: OpenAI's `response_format` with a strict JSON Schema and Anthropic's tool-use mode are schema-guaranteeing; vLLM's guided decoding, the Outlines library, and llama.cpp's GBNF grammars are the open-source engines that enforce this.
+
+This solves the **format** problem - the next step can parse the JSON without fragile regex. It does **not** guarantee the **values** are correct: the model can still place wrong or hallucinated data in perfectly valid fields, so downstream validation of the values still matters. A couple of practical limits: strict schemas accept only a subset of JSON Schema (OpenAI, for example, requires `additionalProperties: false` and every field listed as required, using nullable unions for optional values), and the first request with a new schema pays a one-time grammar-compile latency.
 
 Structured output is critical when the LLM output goes into the next step of a pipeline. Without it, we have to handle a lot of edge cases.
 
