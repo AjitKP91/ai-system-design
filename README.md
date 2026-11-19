@@ -594,12 +594,14 @@ Let me tabulate the differences between Prefill and Decode for your better under
 | Parallelism     | Parallel (all prompt tokens at once)                    | Sequential (one token at a time)                      |
 | Steps           | One big step                                            | Many small steps                                      |
 | Bottleneck      | Compute-bound (limited by math speed)                   | Memory-bandwidth-bound (limited by data movement)     |
-| GPU utilization | High (math units busy, can approach 90 percent or more) | Low (math units mostly idle, around 20 to 40 percent) |
+| GPU utilization | High (math units busy, can approach 90 percent or more) | Low for a single request (math units ~20 to 40 percent busy); batching many decodes together raises this a lot |
 | KV cache action | Writes the cache                                        | Reads and extends the cache                           |
 | Latency metric  | Time To First Token (TTFT)                              | Time Per Output Token (TPOT)                          |
 | Cost driver     | Grows with prompt length                                | Streams full weights plus KV cache every step         |
 
 This split explains a lot of AI System Design. It is why input tokens are cheaper than output tokens. It is why a long prompt makes the first token slow. And it is why so many optimizations focus on the decode phase.
+
+The low decode utilization above is for a single request. The main fix is **continuous batching** - packing many users' decode steps together so one weight read serves many tokens, which pushes the GPU back toward compute-bound and is why decode pools are economical at scale. The other big decode-phase levers are **speculative decoding** (verify several draft tokens per step) and **prefix / KV cache reuse** (skip re-computing a shared prompt prefix). We cover each later in the guide.
 
 ### Chunked Prefill
 
@@ -620,7 +622,7 @@ WITH chunked prefill:
 
 Here, we can see that one giant prefill freezes the other users, while chunked prefill lets their tokens keep flowing between the chunks. It is like a chef with one stove. If a customer orders a huge banquet, cooking it all at once freezes every other table's food. Instead, the chef cooks the banquet in small batches, slipping in the quick single dishes between them.
 
-**Note:** Chunked prefill protects ongoing answers from stalling. It does not make prefill itself faster.
+**Note:** Chunked prefill does not make a single prefill any faster, but by slipping decode steps between chunks it keeps the GPU productive and stops ongoing answers from stalling. At the system level this "stall-free batching" (introduced by the [Sarathi-Serve](https://arxiv.org/abs/2403.02310) paper) is what lets the server add new requests without pausing current ones, which raises overall throughput.
 
 ### Prefill-Decode Disaggregation
 
@@ -635,7 +637,7 @@ In simple words, we have one group of GPUs whose only job is to read prompts, an
 - **Router:** Receives every request and decides which prefill worker and which decode worker will handle it.
 - **Prefill workers:** GPUs that only do prefill. They process the prompt, produce the first token, and build the KV Cache. They are tuned for heavy compute.
 - **Decode workers:** GPUs that only do decode. They receive the KV Cache and generate the answer one token at a time. They are tuned for fast memory access.
-- **KV Cache transfer:** The bridge between the two. The prefill worker sends the KV Cache to the decode worker over a very fast connection like NVLink, InfiniBand, or RDMA.
+- **KV Cache transfer:** The bridge between the two. The prefill worker sends the KV Cache to the decode worker over a fast connection. Inside one node this is NVLink (a few milliseconds for a couple of GB); across nodes it is InfiniBand or RDMA (tens of milliseconds). In practice the cache is sent layer by layer, overlapped with compute, so most of the transfer time is hidden.
 
 The flow looks like below:
 
@@ -659,7 +661,9 @@ Request
 Answer streamed to the user
 ```
 
-Let's take one request with example numbers, just for the sake of understanding. A user sends a prompt of 4000 tokens and the answer will be 200 tokens long. The prefill worker processes all 4000 tokens in, say, 400 ms and produces the first token along with a KV Cache of, say, 2 GB. The user sees the answer start, so our TTFT is around 400 ms. The 2 GB KV Cache is copied to the decode worker in 20 to 50 ms. The decode worker then produces each token in, say, 20 ms, so the 200 tokens take about 4 seconds. The prefill worker has already moved on to the next user's prompt, and the decode worker is never interrupted by a big prefill.
+Let's take one request with example numbers, just for the sake of understanding. A user sends a prompt of 4000 tokens and the answer will be 200 tokens long. The prefill worker processes all 4000 tokens in, say, 400 ms and produces the first token along with a KV Cache of, say, 2 GB. The user sees the answer start, so our TTFT is around 400 ms. The 2 GB KV Cache is copied to the decode worker - a couple of milliseconds over NVLink inside a node, or tens of milliseconds across nodes over InfiniBand/RDMA, and largely hidden behind compute. The decode worker then produces each token in, say, 20 ms, so the 200 tokens take about 4 seconds. The prefill worker has already moved on to the next user's prompt, and the decode worker is never interrupted by a big prefill.
+
+How big the KV Cache is depends on the model: `KV bytes ≈ 2 (K and V) × layers × KV-heads × head-dim × precision-bytes × tokens`. For an older 7B model with full multi-head attention this works out to roughly 0.5 MB per token (so about 2 GB for 4000 tokens, which is where our example number comes from). Modern models shrink this several-fold using [Grouped Query Attention](#grouped-query-attention-gqa) or MQA, and DeepSeek's MLA compresses it further still.
 
 So, the user gets a quick start (low TTFT) and a smooth flow (low TPOT), both at the same time.
 
@@ -676,7 +680,7 @@ Let me tabulate the differences between co-located serving and disaggregated ser
 | Complexity                   | Low                                      | High                                  |
 | Best for                     | Small scale, single GPU, short prompts   | Large scale, many users, long prompts |
 
-For a small setup, chunked prefill on a single GPU is simpler and good enough. For a large setup, disaggregation is the way to go. Serving systems like SGLang support it out of the box.
+For a small setup, chunked prefill on a single GPU is simpler and good enough. For a large setup, disaggregation is the way to go. The idea comes from the [DistServe](https://arxiv.org/abs/2401.09670) and [Splitwise](https://arxiv.org/abs/2311.18677) papers, and production serving systems like NVIDIA Dynamo, vLLM, SGLang, and Mooncake support it. One honest caveat: the main win is being able to hit TTFT and TPOT targets independently (goodput), not free extra throughput.
 
 ## Scaling AI Systems
 
