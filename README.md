@@ -2109,21 +2109,25 @@ In plain words, [**MCP**](https://outcomeschool.com/blog/what-is-mcp-model-conte
 
 The popular analogy is: MCP is the **USB-C port for AI**. Just as USB-C is one standard plug that any device can use, MCP is one standard interface that any AI application can use to plug into any tool or data source.
 
-MCP was introduced by Anthropic in late 2024 and has since been adopted by OpenAI, Microsoft, and parts of the Google and AWS stacks. As of 2026, the ecosystem has thousands of MCP servers covering developer tools, business apps, databases, and search.
+MCP was introduced by Anthropic in November 2024 and has since been adopted by OpenAI, Microsoft, and parts of the Google and AWS stacks. As of 2026, the ecosystem has thousands of MCP servers covering developer tools, business apps, databases, and search.
 
 ### How MCP works
 
 MCP has two sides:
 
-- **MCP Server:** A small program that exposes a tool or a data source (a database, a file system, a Slack workspace, a GitHub repo) over the MCP protocol. Anyone can write one.
-- **MCP Client:** Inside our AI application (or AI Gateway). It connects to one or more MCP servers and exposes their tools to the LLM in a uniform way.
+- **MCP Server:** A small program that exposes tools (actions), resources (data and context), and prompts (reusable templates) from a system - a database, a file system, a Slack workspace, a GitHub repo - over the MCP protocol. Anyone can write one.
+- **MCP Client:** The host application (our AI app or AI Gateway) spins up one MCP client per server it connects to, and exposes all their tools, resources, and prompts to the LLM in a uniform way.
+
+MCP exposes three core primitives: **Tools** (model-controlled actions the LLM can call), **Resources** (application-controlled data pulled into context, like file contents or DB records), and **Prompts** (user-controlled templates). The guide's tool-calling examples are the Tools primitive; MCP adds the other two.
+
+A server connects over one of two transports: **stdio** for a local server (launched as a subprocess on the same machine) or **Streamable HTTP** for a remote server (which replaced the older HTTP+SSE transport in the 2025 spec).
 
 ```
 +----------------+        +-------------+        +----------------+
-|   AI Agent     |        |             |        | GitHub Server  |
-| (MCP Client)   | <----> | MCP         | <----> | (MCP Server)   |
-+----------------+        | Standard    |        +----------------+
-                          |             |        +----------------+
+|   AI Agent     |        | MCP         |        | GitHub Server  |
+| (MCP Client)   | <----> | (JSON-RPC   | <----> | (MCP Server)   |
++----------------+        |  over stdio |        +----------------+
+                          |  or HTTP)   |        +----------------+
                           |             | <----> | Slack Server   |
                           |             |        | (MCP Server)   |
                           |             |        +----------------+
@@ -2139,7 +2143,7 @@ When our agent wants to use a tool, it does not care whether the tool talks to G
 
 Without MCP, every team writes its own tool layer. With MCP:
 
-- **Reuse:** We can plug into any of the thousands of existing MCP servers without writing integration code.
+- **Reuse:** We can plug into any of the thousands of existing MCP servers without writing integration code. The official MCP Registry (a central catalog of servers with a discovery API, launched in preview in 2025) makes them easy to find.
 - **Standard schema:** The tool descriptions, input schemas, and result formats are uniform.
 - **Multi-application support:** The same MCP server can be used by Claude, ChatGPT, Cursor, our own agent, and any other MCP client.
 - **Security boundary:** MCP servers run as separate processes, often with their own permissions, so we have a clear security boundary between the agent and the actual integration.
@@ -2155,9 +2159,9 @@ Without MCP, every team writes its own tool layer. With MCP:
 - We are building a small, single-purpose agent with one or two custom tools.
 - Our tools are tightly coupled to our business logic and not reusable.
 
-MCP is now the default way to do tool calling in production AI systems. If we are designing a serious AI System Design problem in 2026, mentioning MCP is expected.
+MCP is now the default way to connect agents to external tools and data in production AI systems. If we are designing a serious AI System Design problem in 2026, mentioning MCP is expected.
 
-**Note:** An MCP server is code that runs with real permissions. We must only connect to MCP servers we trust, give each server the smallest set of permissions it needs, and treat every tool result as untrusted text (we will see why in Prompt Injection).
+**Note:** An MCP server is code that runs with real permissions. We must only connect to MCP servers we trust, give each server the smallest set of permissions it needs, and treat every tool result as untrusted text (we will see why in Prompt Injection). MCP adds its own risks to watch: **tool poisoning** (malicious instructions hidden in a tool's description or metadata), **rug-pulls** (a server silently changing a tool's behavior after we approved it), **confused-deputy** attacks through OAuth proxies, and the need for proper **OAuth authorization** on remote servers (the 2025 spec treats MCP servers as OAuth resource servers and forbids token pass-through).
 
 ## Agent Skills
 
