@@ -3586,13 +3586,14 @@ This step is the heart of the discussion.
 For our Customer Support Chatbot, the architecture looks like below:
 
 ```
-User -> Backend -> Embedding Model -> Vector DB (top 50 chunks)
+User -> Backend -> Embedding Model -> Vector DB + BM25 (hybrid, top 50 chunks)
                                               |
                                               v
                                       Reranker (top 5 chunks)
                                               |
                                               v
                           LLM (system prompt + chunks + question)
+                                     [prompt + semantic cache, model routing]
                                               |
                                               v
                                        Streamed Response
@@ -3619,8 +3620,8 @@ Here, we pick the LLM, the embedding model, and the reranker. We also write the 
 
 Model picks:
 
-- **Main chat model:** Haiku 4.5 (cheap and fast). Good enough for 90% of queries.
-- **Fallback chat model:** Sonnet 4.6 for hard queries (when the main model says "I do not know").
+- **Main chat model:** Haiku 5.5 (cheap and fast). Good enough for 90% of queries.
+- **Fallback chat model:** Sonnet 5.5 for hard queries. The escalation order is: Haiku says "I do not know" -> retry with Sonnet; if Sonnet also cannot answer from the context -> escalate to a human.
 - **Embedding model:** A small, cheap model. We do not need the biggest embedding model for this scale.
 - **Reranker:** Cohere Rerank.
 
@@ -3676,6 +3677,8 @@ Now we ship the system.
 - **Privacy:** Never log full prompts and responses in production logs (we redact PII first).
 - **Rollout:** Deploy to 10% of users first as a canary. Watch the metrics. Roll out to 100% only if quality holds.
 
+**Cost check (back-of-the-envelope):** 50k chats/day x 5 messages x 30 = 7.5M messages/month. At roughly 3k input tokens (top-5 chunks plus prompt and history) and ~300 output tokens per message on a Haiku-class model (~$0.10/$0.50 per 1M), the LLM cost is about $3,000 to $4,000 per month - inside the $5000 budget, but with little room to spare. The reranker is the other big line: one rerank per message is 7.5M calls per month, so the semantic cache (which skips both the LLM and the rerank on repeat questions) is what keeps the design affordable. This is exactly the kind of estimate we do in the [Back-of-the-envelope Estimation](#back-of-the-envelope-estimation-for-ai) step - always check the design against the budget before committing to a model.
+
 The final step is Monitoring.
 
 ### Step 8: Monitoring
@@ -3694,8 +3697,8 @@ We track:
 
 We set alerts on:
 
-- Daily cost goes above $200.
-- Average latency goes above 3 seconds.
+- Daily cost goes above $150 (the $5000 monthly budget is about $167/day, so we want to be warned before we are on track to exceed it).
+- p95 TTFT exceeds 1 second (our stated SLO), or average total response time goes above 3 seconds.
 - User satisfaction (thumbs-up rate) drops below 80%.
 - Faithfulness score drops below 90%.
 - Escalation rate rises above a threshold (which means the bot is suddenly refusing more answers).
