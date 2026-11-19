@@ -3081,13 +3081,13 @@ Tools: PromptLayer, Humanloop, LangSmith Prompts, Latitude.
 
 We never hardcode prompts in our application code in production. We pull them from the prompt management system, just like we pull config from a config service.
 
-A few prompt techniques come up again and again in production. [**Chain-of-Thought (CoT) Prompting**](https://outcomeschool.com/blog/how-does-chain-of-thought-prompting-work) asks the model to write out its reasoning steps before giving the final answer, which improves accuracy on multi-step problems but costs more output tokens. [**Tree of Thoughts**](https://outcomeschool.com/blog/how-does-tree-of-thoughts-work) goes one step further: the model explores many reasoning paths, judges each step, and backtracks from the bad ones, which helps on search-like problems but costs many more LLM calls. [**Prompt Chaining**](https://outcomeschool.com/blog/how-does-prompt-chaining-work) breaks one big task into smaller prompts, where the output of one prompt becomes the input of the next, so each step is small, testable, and reliable.
+A few prompt techniques come up again and again in production. [**Chain-of-Thought (CoT) Prompting**](https://outcomeschool.com/blog/how-does-chain-of-thought-prompting-work) ([Wei et al., 2022](https://arxiv.org/abs/2201.11903)) asks the model to write out its reasoning steps before giving the final answer, which improves accuracy on multi-step problems but costs more output tokens. [**Tree of Thoughts**](https://outcomeschool.com/blog/how-does-tree-of-thoughts-work) ([Yao et al., 2023](https://arxiv.org/abs/2305.10601)) goes one step further: the model explores many reasoning paths, judges each step, and backtracks from the bad ones, which helps on search-like problems but costs many more LLM calls. [**Prompt Chaining**](https://outcomeschool.com/blog/how-does-prompt-chaining-work) breaks one big task into smaller prompts, where the output of one prompt becomes the input of the next, so each step is small, testable, and reliable.
 
 ### Programmatic Prompting with DSPy
 
-Now, let's see a different way to write prompts. A new approach is starting to replace hand-written prompts: **DSPy**, a framework from Stanford for programming language models instead of prompting them.
+Now, let's see a different way to write prompts. A growing alternative to hand-written prompts is **DSPy**, a framework from Stanford for programming language models instead of prompting them.
 
-The idea behind DSPy is simple: instead of writing prompts as strings, we describe what we want using a typed **signature** (input fields and output fields), and DSPy compiles that into an actual prompt automatically. We can also let DSPy run an optimizer that tries many prompt variants on our eval set and picks the one with the highest score.
+The idea behind DSPy is simple: instead of writing prompts as strings, we describe what we want using a typed **signature** (input fields and output fields), and DSPy compiles that into an actual prompt automatically. We can also let DSPy run an **optimizer** - such as BootstrapFewShot, MIPROv2, or the newer reflective optimizer GEPA - that tries many prompt and few-shot variants on our eval set and picks the one with the highest score.
 
 **DSPy lets us compile prompts the way we compile code.**
 
@@ -3107,7 +3107,7 @@ result = qa(context="...", question="What is the refund policy?")
 print(result.answer)
 ```
 
-There is no manually written prompt anywhere. DSPy generates one from the signature, and we can swap the underlying model or run a compiler to improve quality without changing the code.
+There is no manually written prompt anywhere. DSPy generates one from the signature, and we can swap the underlying model or run a compiler to improve quality without changing the code. (In a real program we first point DSPy at a model with `dspy.configure(lm=dspy.LM(...))`.)
 
 DSPy is not a replacement for prompt management - it is an alternative way to write the prompt itself. It is especially useful for complex pipelines (multi-step RAG, agents) where hand-tuning every prompt becomes painful.
 
