@@ -1201,9 +1201,9 @@ A real document parsing pipeline does the following:
 
 A common pattern is **confidence-based routing**: high-confidence parses flow straight through, medium-confidence get flagged for spot-check, low-confidence go to manual review.
 
-Tools used: Unstructured, LlamaParse, Mistral OCR, Nemotron Doc Pipeline, AWS Textract, Azure Document Intelligence.
+Tools used: Unstructured, LlamaParse, Mistral OCR, NVIDIA NeMo Retriever extraction, AWS Textract, Azure Document Intelligence.
 
-In real RAG projects, 60% to 80% of the engineering effort goes into this step. We must build the document pipeline with the same care we give to the LLM call itself.
+In real RAG projects, as a rule of thumb, 60% to 80% of the engineering effort goes into this step. We must build the document pipeline with the same care we give to the LLM call itself.
 
 ### Chunking Strategies
 
@@ -1216,7 +1216,7 @@ Common chunking strategies:
 - **Fixed-size chunking:** Cut every 500 tokens. Simple but breaks sentences in the middle.
 - **Sentence-based chunking:** Cut at sentence boundaries. Better for natural reading.
 - **Recursive chunking:** Try to cut on big breaks first (paragraph), then medium (sentence), then small (word).
-- **Semantic chunking:** Use embeddings to detect topic shifts and cut there. Best quality but slowest.
+- **Semantic chunking:** Use embeddings to detect topic shifts and cut there. Often higher quality but slowest, and not always worth the cost.
 - **Document-structure chunking:** For code, cut at function boundaries. For markdown, cut at headings.
 
 **Chunk overlap** means we repeat the last few lines of one chunk at the start of the next chunk, so that an idea cut at the boundary still appears whole in at least one chunk. A common setting is an overlap of about 10 to 20 percent of the chunk size. So, for a chunk of 500 tokens, an overlap of 50 to 100 tokens works well.
@@ -1229,7 +1229,9 @@ The right chunk size depends on the kind of answer:
 
 We start with the default and then tune it with evals on our own data.
 
-Even with good chunking, a chunk can lose its context. A chunk that says "Revenue grew by 3% over the previous quarter" does not tell us which company or which quarter it is about. To fix this, we use **Contextual Retrieval**: before storing each chunk, an LLM writes a short note that explains where the chunk comes from, and we add that note to the chunk before computing its embedding and its BM25 index. We have a detailed blog on [How does Contextual Retrieval work?](https://outcomeschool.com/blog/how-does-contextual-retrieval-work)
+Even with good chunking, a chunk can lose its context. A chunk that says "Revenue grew by 3% over the previous quarter" does not tell us which company or which quarter it is about. To fix this, we use **Contextual Retrieval** (a technique from Anthropic): before storing each chunk, an LLM writes a short note that explains where the chunk comes from, and we add that note to the chunk before computing its embedding and its BM25 index. Anthropic reports this cuts retrieval failures by about 35% on its own, by 49% when combined with contextual BM25, and by 67% when reranking is added too. We have a detailed blog on [How does Contextual Retrieval work?](https://outcomeschool.com/blog/how-does-contextual-retrieval-work)
+
+A related production pattern is **small-to-big (parent-document) retrieval**: embed small chunks so matching stays precise, but return the larger parent section (or a surrounding "sentence window") to the LLM so it has enough context. This gets the best of both the small-chunk and large-chunk tradeoffs above.
 
 ### Hybrid Search
 
@@ -1239,7 +1241,9 @@ For exact-match, the old keyword search (**BM25** - Best Matching 25) is much be
 
 So in production RAG, we use [**Hybrid Search**](https://outcomeschool.com/blog/how-does-hybrid-search-work): run both vector search and BM25, combine the scores, and return the best results from both.
 
-The two lists have scores on different scales, so we cannot just add them. A popular way to merge them is **Reciprocal Rank Fusion (RRF)**, which ignores the raw scores and only uses the position of each chunk in each list. A chunk that ranks high in both lists ends up at the top.
+The two lists have scores on different scales, so we cannot just add them. A popular way to merge them is **Reciprocal Rank Fusion (RRF)**, which ignores the raw scores and only uses the position of each chunk in each list (each chunk scores the sum of `1 / (k + rank)` across lists, with `k` around 60). A chunk that ranks high in both lists ends up at the top.
+
+A third option alongside dense vectors and BM25 is **learned-sparse retrieval** (such as SPLADE): a neural model expands each piece of text into weighted keywords, giving BM25-style exact matching with some of the semantic benefit of embeddings, still served from an inverted index.
 
 Tools like Elasticsearch, OpenSearch, Weaviate, and Qdrant support hybrid search natively.
 
@@ -1303,7 +1307,7 @@ The two-stage funnel looks like below:
 
 This two-stage retrieval (cheap retrieval + accurate reranking) is the standard for high-quality RAG. Stage 1 casts a wide net cheaply. Stage 2 picks the best ones precisely.
 
-Examples of rerankers: Cohere Rerank, BGE Reranker, Jina Reranker.
+Examples of rerankers: Cohere Rerank 3.5, Voyage rerank-2, Qwen3-Reranker, Jina Reranker v2, and BGE Reranker.
 
 A reranker is one of the simplest changes that gives a big jump in RAG quality. It also helps with the Lost in the Middle problem (we will see it soon), because sending 5 good chunks is better than sending 50 average ones.
 
@@ -1336,7 +1340,7 @@ So, here comes [**ColBERT**](https://outcomeschool.com/blog/decoding-colbert) to
 
 Here, we can see the difference clearly. Because the document is encoded without seeing the query, every document's vectors can be computed once, offline. At query time, each query token finds its best matching document token (this is called **MaxSim**), and the scores are added up.
 
-The price is storage. A 100-token passage needs 100 vectors instead of 1, which is 100 times more storage. So, ColBERT buys its accuracy with disk space. We use it as a strong reranker, or for end-to-end retrieval when quality matters more than storage cost.
+The price is storage. A 100-token passage is stored as 100 small vectors instead of 1, so a naive ColBERT index is roughly 6 to 10 times larger than a single-vector index (its token vectors are only 128-dimensional, not as large as this count suggests). **ColBERTv2** shrinks this a lot with residual compression (about 20 to 36 bytes per token vector) - on MS MARCO it cuts the index from 154 GiB to 16-25 GiB, making it only a few times larger than a single-vector index. We use ColBERT as a strong reranker, or for end-to-end retrieval when quality matters more than storage cost.
 
 ### Agentic RAG
 
@@ -1398,7 +1402,7 @@ User Question
      +--- Yes --> generate the final answer
 ```
 
-Common patterns of Agentic RAG: **[ReAct-style RAG](https://outcomeschool.com/blog/react-agent)** (think, act, observe loop), **Self-RAG** (the agent grades its own retrievals), and **Corrective RAG (CRAG)** (the agent recommends a fallback source when the main retrieval is bad).
+Common patterns of Agentic RAG: **[ReAct-style RAG](https://outcomeschool.com/blog/react-agent)** (think, act, observe loop), **Self-RAG** (a model trained to decide *when* to retrieve and to critique both the retrieved passages and its own answer, using special "reflection tokens"), and **Corrective RAG (CRAG)** (a lightweight evaluator scores the retrieved docs and, when they are weak, falls back to web search and filters the results before answering).
 
 The trade-off is real: Agentic RAG has higher latency, higher cost, and is harder to debug. We use Agentic RAG only when standard RAG cannot do the job.
 
@@ -1477,9 +1481,9 @@ GraphRAG is much better at:
 - Holistic summaries ("What are the main themes in this dataset?")
 - Entity-centric queries ("Show me everything related to Customer X")
 
-The trade-off: GraphRAG is much more expensive to index (every document goes through LLM extraction) and harder to update incrementally. We use it when relationships matter and the data is fairly stable.
+The trade-off: GraphRAG is much more expensive to index (every document goes through LLM extraction) and harder to update incrementally. We use it when relationships matter and the data is fairly stable. Lighter variants like **LightRAG** combine a graph with vector retrieval and support incremental updates, as an answer to exactly this update problem.
 
-Microsoft Research's GraphRAG project is the most well-known implementation. Other tools: LlamaIndex Knowledge Graph Index, Neo4j LLM Graph Builder.
+Microsoft Research's GraphRAG project is the most well-known implementation. It offers two query modes worth knowing: **Local Search** answers entity-centric questions by combining a node's graph neighborhood with its raw text chunks, while **Global Search** answers holistic "what are the main themes" questions by map-reducing over the pregenerated community summaries - this is what actually powers the holistic-summary strength above. Other tools: LlamaIndex Knowledge Graph Index, Neo4j LLM Graph Builder.
 
 In short:
 
@@ -1499,7 +1503,7 @@ Now, let's see the opposite direction. Vector RAG has some real problems:
 
 So, here comes [**Vectorless RAG**](https://outcomeschool.com/blog/vectorless-rag) to the rescue.
 
-**Vectorless RAG = RAG without the vectors.** Instead of searching by number similarity, we let the LLM itself look at the structure of the document and decide which part to open, exactly the way a human finds an answer in a book.
+**Vectorless RAG = RAG without the vectors.** Instead of searching by number similarity, we let the LLM itself look at the structure of the document and decide which part to open, exactly the way a human finds an answer in a book. ("Vectorless RAG" is a label popularized by PageIndex from Vectify AI; the general idea is LLM-driven hierarchical, or tree, retrieval.)
 
 Suppose we buy a washing machine and want to know about the warranty. We get a 200-page manual. We do not measure the similarity of anything. We open the table of contents, see "Chapter 9: Warranty and Service", jump to page 154, and read it. That is the whole idea.
 
@@ -1519,9 +1523,9 @@ Let me tabulate the differences between Vector RAG and Vectorless RAG for your b
 | Very fast and very cheap for each question.        | Slower and costlier, because it needs a few LLM calls. |
 | Hard to explain why a chunk was picked.            | Easy to explain, because the LLM gives its reason.     |
 | Scales very well to millions of documents.         | Works best on long and well structured documents.      |
-| Struggles with exact codes, numbers, and negation. | Handles exact codes, numbers, and negation well.       |
+| Struggles with exact codes, numbers, and negation. | Designed to handle exact codes, numbers, and negation better, since the LLM reads the actual section text. |
 
-We must use **Vector RAG** for a very large number of short documents where speed and low cost matter, like a help center with a million articles. We must use **Vectorless RAG** for long, well structured documents where a wrong answer is expensive, like insurance policies, legal contracts, annual reports, and technical manuals. Many strong systems use both: a cheap vector or keyword search narrows millions of documents down to twenty, and then tree search finds the exact section inside those twenty.
+We must use **Vector RAG** for a very large number of short documents where speed and low cost matter, like a help center with a million articles. We must use **Vectorless RAG** for long, well structured documents where a wrong answer is expensive, like insurance policies, legal contracts, annual reports, and technical manuals. Many strong systems use both: a cheap vector or keyword search narrows millions of documents down to twenty, and then tree search finds the exact section inside those twenty. A related academic approach is **RAPTOR**, which also builds a tree by recursively clustering and summarizing chunks - but it still retrieves with embeddings, so it is a tree-retrieval cousin rather than truly vectorless.
 
 To learn RAG, Vector Databases, embeddings, and retrieval pipelines end to end with hands-on projects, check out the [AI and Machine Learning Program](https://outcomeschool.com/program/ai-and-machine-learning) by Outcome School.
 
