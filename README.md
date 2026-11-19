@@ -239,7 +239,9 @@
 
 ## About This AI System Design Guide
 
-In this guide, we will learn about AI System Design, the discipline of putting GPUs, inference servers, caches, vector databases, AI agents, gateways, guardrails, and evals together into one system that is fast, cheap, reliable, and safe. We will also see how an LLM actually runs on a GPU, how prefill and decode shape latency, how caching, routing, and batching cut the cost, how RAG and AI Agents are built for production, how we keep the system safe and measurable, and a step-by-step framework to solve any AI System Design problem in an interview or in real production.
+In this guide, we will learn about AI System Design: the discipline of putting GPUs, inference servers, caches, vector databases, AI agents, gateways, guardrails, and evals together into one system that is fast, cheap, reliable, and safe.
+
+Along the way, we will see how an LLM actually runs on a GPU, how prefill and decode shape latency, how caching, routing, and batching cut the cost, and how RAG and AI Agents are built for production. We will also cover how to keep the system safe and measurable, and finish with a step-by-step framework to solve any AI System Design problem - in an interview or in real production.
 
 When we use a product like ChatGPT, Cursor, Perplexity, or Claude Code, we see a simple chat box and a streamed response. Behind that simple interface, there is a lot more happening - GPUs, inference servers, vector databases, agent loops, caches, gateways, guardrails, and a long list of design decisions that all have to work together.
 
