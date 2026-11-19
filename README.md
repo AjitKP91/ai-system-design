@@ -2169,7 +2169,7 @@ So, here comes [**Agent Skills**](https://outcomeschool.com/blog/what-are-agent-
 
 Agent Skills were introduced by Anthropic in October 2025, and the format is open. Consider a new employee joining our team. We do not retrain them from zero. We hand them our team handbook with separate chapters - one for filing an expense, one for releasing software, one for writing a report. They open one chapter only when they face that job. A Skill is exactly one such chapter.
 
-Inside the folder, there is one required file called `SKILL.md` with a `name`, a `description`, and the instructions. The magic is **progressive disclosure**, which means revealing information in stages, only as much as is needed right now:
+Inside the folder, there is one required file called `SKILL.md` whose YAML frontmatter carries the required `name` and `description`, followed by the instructions. The magic is **progressive disclosure**, which means revealing information in stages, only as much as is needed right now:
 
 ```
    Level 1  ->  name + description only          (always loaded, tiny)
@@ -2177,7 +2177,9 @@ Inside the folder, there is one required file called `SKILL.md` with a `name`, a
    Level 3  ->  extra files in the folder        (loaded only if needed)
 ```
 
-Level 1 costs only about a hundred tokens for each Skill. Level 2 is normally kept under five thousand tokens, and we pay that only for the one Skill we are actually using. So, fifty Skills at Level 1 cost about the same as the body of one single Skill. The agent behaves as if it knows fifty procedures in depth, while its context stays almost empty.
+Level 1 costs only about a hundred tokens per Skill (illustrative - Anthropic specifies no fixed number, just "keep it concise"). The `description` is the signal the agent matches the task against to decide whether to pull in the body. Level 2 is normally kept small, and we pay that only for the one Skill we are actually using. So, fifty Skills at Level 1 cost about the same as the body of one single Skill. The agent behaves as if it knows fifty procedures in depth, while its context stays almost empty.
+
+A Skill can also ship scripts that the agent executes as tools, not just instructions - so a Skill is effectively code. Install Skills only from sources we trust, and audit the rest, since a malicious Skill could exfiltrate data or take unintended actions.
 
 Let me tabulate the differences between Agent Skills and MCP for your better understanding.
 
