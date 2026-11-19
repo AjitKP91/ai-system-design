@@ -692,7 +692,7 @@ Let's see the different ways to scale.
 
 Use a bigger machine. In AI, this means a bigger GPU.
 
-Example: Move from an A100 (80 GB) to an H100 (80 GB but faster) or to an H200 (141 GB).
+Example: Move from an A100 (40 or 80 GB) to an H100 (80 GB but faster) or to an H200 (141 GB).
 
 This works only up to a point. The biggest GPU on the market is still limited. Big models do not fit.
 
@@ -708,7 +708,9 @@ This is the most common form of scaling. It works perfectly when the model fits 
 
 When the model does not fit in one GPU, we split the model itself across multiple GPUs.
 
-Example: Llama 70B in 16-bit precision needs around 140 GB. A single A100 has 80 GB. So we split the model across 2 A100s. Each GPU holds half of the model weights. When a forward pass happens, the GPUs talk to each other very fast over **NVLink** (a high-speed direct connection between NVIDIA GPUs that is much faster than going over a regular network) to compute the result.
+A quick rule for model size: weights take about **2 bytes per parameter** in 16-bit precision. So Llama 70B needs roughly 70B × 2 = **140 GB** just for weights. A single A100 has 80 GB, so the model does not fit on one GPU.
+
+But weights are only part of the memory budget. We also need room for the KV Cache (which grows with batch size and context length), activations, and framework overhead. So in practice a 70B model is served across **4 to 8 GPUs**, not 2, to leave headroom for real concurrency. We split the weight matrices across those GPUs, and on every layer the GPUs exchange partial results with an **all-reduce**. Because this happens inside every layer and is bandwidth-heavy and latency-sensitive, tensor parallelism has to stay **within a single machine**, over **NVLink/NVSwitch** (a high-speed direct connection between NVIDIA GPUs, much faster than a regular network). It does not work well across nodes.
 
 This is called **tensor parallelism** because we split the tensors (weight matrices) of the model across GPUs.
 
@@ -718,7 +720,7 @@ In pipeline parallelism, we put different layers of the model on different GPUs.
 
 Example: A model has 80 layers. We put layers 1 to 40 on GPU 1 and layers 41 to 80 on GPU 2. The token first goes through GPU 1, then to GPU 2.
 
-This is good for very large models that have many layers.
+Unlike tensor parallelism, pipeline stages pass only small activations from one stage to the next, point to point, and tolerate slower links. That makes pipeline parallelism **cross-node friendly** - it is mainly how we spread a model that is too big for a single machine across several machines. The catch is the **pipeline bubble**: while GPU 1 works on the first layers, GPU 2 sits idle waiting, and vice versa. The fix is **micro-batching** - splitting the batch into small chunks so every stage stays busy on a different chunk.
 
 Here is a side-by-side picture of the two parallelism styles:
 
@@ -747,14 +749,35 @@ Tensor Parallelism                         Pipeline Parallelism
 
 In tensor parallelism, the GPUs talk to each other inside every layer. In pipeline parallelism, each GPU finishes its layers before passing the token to the next GPU. Both can be combined for very large models.
 
+### Other Ways to Split Work
+
+Tensor and pipeline parallelism split a single model. There are two more dimensions worth knowing, and one important reconciliation:
+
+- **Data (replica) parallelism:** Run a full copy of the model on each GPU or server and split the *traffic* across them. This is exactly what **horizontal scaling** above is - the load balancer is the "split the batch" step. For inference, this is the default way to add throughput once the model fits.
+- **Expert parallelism:** For **Mixture-of-Experts** models (Mixtral, DeepSeek, and most frontier open models today), put different experts on different GPUs; each token is routed to only a few of them.
+- **Sequence / context parallelism:** Split along the token (sequence) dimension so a single very long context (100k+ tokens) can be spread across GPUs, taming the quadratic cost of attention.
+
+Large deployments **stack these** (often called 2D/3D parallelism): for example, tensor parallelism within a node, pipeline parallelism across nodes, and data/replica parallelism for throughput.
+
+Here is how the options compare:
+
+| Type | What gets split | Communication | Intra- vs cross-node | Best for (inference) |
+| ---- | --------------- | ------------- | -------------------- | -------------------- |
+| Data / replica (= horizontal scaling) | The traffic (full model copy per GPU) | Low (just routing) | Either | Throughput once the model fits on one GPU |
+| Tensor (TP) | Weight matrices within each layer | High: all-reduce every layer | Intra-node only (NVLink/NVSwitch) | Making a too-big model fit inside one node |
+| Pipeline (PP) | Consecutive layers into stages | Low: activations between stages (has bubbles) | Cross-node friendly | Model too big for a single node |
+| Expert (EP) | MoE experts across GPUs | Medium: token routing / all-to-all | Either | MoE models |
+| Sequence / context | The token/sequence dimension | Medium: attention comms along sequence | Either | Very long context (100k+) |
+
 ### How to choose
 
 We pick the scaling strategy based on our model size and traffic:
 
 - Small model + low traffic: One GPU is enough.
-- Small model + high traffic: Horizontal scaling with a load balancer.
+- Small model + high traffic: Horizontal scaling (data/replica parallelism) with a load balancer.
 - Big model + low traffic: Tensor parallelism within one machine (multiple GPUs).
-- Big model + high traffic: Tensor parallelism for the model + horizontal scaling for the traffic.
+- Big model + high traffic: Tensor parallelism for the model + add replicas (horizontal scaling) for the traffic.
+- Model too big for even one machine: Tensor parallelism within each node + pipeline parallelism across nodes.
 
 ## Auto Scaling for AI
 
