@@ -203,6 +203,7 @@
   - [Experiment Tracking](#experiment-tracking)
   - [Model Registry](#model-registry)
   - [Evaluation](#evaluation)
+  - [Beyond Supervised Fine-Tuning](#beyond-supervised-fine-tuning)
 - [Inference Optimization](#inference-optimization)
   - [Quantization](#quantization)
   - [Continuous Batching](#continuous-batching)
@@ -3171,9 +3172,9 @@ Sometimes, prompting and RAG are not enough. We need to teach the model new beha
 
 For that, we [**fine-tune**](https://outcomeschool.com/blog/how-does-fine-tuning-work) the model. We take a base model (like Llama 8B) and train it further on our own data.
 
-A simple way to decide: **RAG gives the model new knowledge. Fine-tuning gives the model new behavior** (a format, a tone, a narrow skill). If the problem is "the model does not know our data", use RAG. If the problem is "the model does not behave the way we want even with good prompts", consider fine-tuning.
+A simple way to decide: **RAG gives the model new knowledge. Fine-tuning gives the model new behavior** (a format, a tone, a narrow skill). If the problem is "the model does not know our data", use RAG. If the problem is "the model does not behave the way we want even with good prompts", consider fine-tuning. (This is a rule of thumb, not a hard rule - fine-tuning can absorb some knowledge, and good retrieval can shape behavior.)
 
-Fine-tuning needs a separate infrastructure:
+Fine-tuning needs a separate infrastructure. (We do not always have to build it ourselves: hosted fine-tuning APIs from OpenAI, Google Vertex AI, and Together let us upload data and run the training as a managed service, which is enough for most teams.)
 
 ### Training Cluster
 
@@ -3195,11 +3196,15 @@ After training, we save the model with a version. The inference server can pull 
 
 Before deploying the fine-tuned model, we run it through the eval pipeline to make sure it actually got better.
 
+### Beyond Supervised Fine-Tuning
+
+Not all fine-tuning is supervised (input-to-output examples, called SFT). To tune *behavior and alignment* - tone, safety, preferred style - teams use **preference tuning**: RLHF, or the simpler **DPO (Direct Preference Optimization)**, which learns directly from (preferred, rejected) response pairs with no separate reward model and no reinforcement-learning loop (Rafailov et al., 2023). This is often the right tool for the "new behavior" goal above.
+
 Tools used: Hugging Face TRL, Axolotl, LLaMA Factory, Unsloth.
 
 For most apps, we do not need to fine-tune. Prompting plus RAG is enough. I personally believe that most teams reach for fine-tuning too early, when better prompting, better retrieval, or a stronger base model would have solved the problem with a fraction of the effort. Fine-tuning is only worth it when we have a very narrow task and lots of high-quality training data.
 
-A popular middle ground is **[LoRA (Low-Rank Adaptation)](https://outcomeschool.com/blog/lora-low-rank-adaptation-of-llms)**. Instead of fine-tuning all the weights of the model (which is expensive), LoRA freezes the original weights and trains only a small set of extra "adapter" weights on top. The adapters are tiny - sometimes less than 1% of the total model size. This makes fine-tuning much cheaper and faster, and we can keep multiple LoRA adapters for different tasks and swap them at inference time. Most production fine-tuning today uses LoRA or a variant like QLoRA.
+A popular middle ground is **[LoRA (Low-Rank Adaptation)](https://outcomeschool.com/blog/lora-low-rank-adaptation-of-llms)**. Instead of fine-tuning all the weights of the model (which is expensive), LoRA freezes the original weights and trains only a small set of extra "adapter" weights on top. The adapters are tiny - sometimes less than 1% of the total model size. This makes fine-tuning much cheaper and faster, and we can keep multiple LoRA adapters for different tasks and swap them at inference time. Most production fine-tuning today uses LoRA or a variant like QLoRA (a 4-bit quantized base model plus LoRA adapters, which lets us fine-tune large models on a single GPU). Because many adapters share one frozen base model, serving stacks like vLLM (and S-LoRA) can host dozens of LoRA adapters on a single base model and route each request to the right one - so per-customer or per-task fine-tunes cost almost nothing extra to serve.
 
 To learn Fine-tuning, PEFT, LoRA, QLoRA, Quantization, Knowledge Distillation, and SLMs hands-on, check out the [AI and Machine Learning Program](https://outcomeschool.com/program/ai-and-machine-learning) by Outcome School.
 
