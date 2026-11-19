@@ -3468,15 +3468,17 @@ We design for these.
 
 ### Timeouts
 
-Every LLM call has a timeout. If it takes too long, we kill it and either fail or retry.
+Every LLM call has a timeout. If it takes too long, we kill it and either fail or retry. For **streamed** responses we use an idle / inter-token timeout (kill it if no token arrives for N seconds), not just a total wall-clock timeout - a long but healthy generation should not be killed, and a stalled stream should be.
 
 ### Retries with Backoff
 
-On transient errors (rate limits, 5xx), we retry with exponential backoff.
+On transient errors (rate limits, 5xx), we retry with exponential backoff **and jitter**. Plain exponential backoff makes all the failed clients retry at the same moment, which just re-creates the overload (a "retry storm"); jitter randomizes each delay to spread them out, for example `sleep = random(0, min(cap, base * 2^n))`. On a `429`, honor the server's `Retry-After` header instead of computing our own delay. Retries are **capped** (a fixed max, and ideally a retry *budget* that limits what fraction of traffic is retries) so we never hammer a failing provider.
+
+**Retries must be safe to repeat.** A retried LLM call costs tokens again and can double real side effects (a tool call that sends an email or writes a record). We bound the retry count and use an idempotency key so a repeat returns the original result rather than re-executing.
 
 ### Fallback Models
 
-If the primary model is down, we automatically switch to a secondary model. Like primary = GPT-5.5, fallback = Claude Opus 4.8.
+If the primary model is down, we automatically switch to a secondary model. Like primary = GPT-5.5, fallback = Claude Opus 4.8. Because a fallback model can format or behave differently, we run its output through the same validation as the primary's. When a provider is failing outright (not just slow), a **circuit breaker** (see the [AI Gateway](#ai-gateway) section) stops new calls for a cool-off window so we fail fast to the fallback instead of queuing behind timeouts.
 
 ### Graceful Degradation
 
@@ -3484,7 +3486,7 @@ If the AI feature fails, the app does not crash. It falls back to a simpler expe
 
 ### Output Validation
 
-Always validate the LLM output before using it. If we asked for JSON and got something else, retry with a stricter prompt.
+Always validate the LLM output against a schema before using it (structured-output / JSON-schema checks, not just "did it parse"). If it is wrong, retry with a stricter prompt - but **cap the retries** so a stubbornly malformed response cannot loop forever; after the cap, degrade gracefully.
 
 Tools that handle this for us: LiteLLM, LangChain, Helicone, Portkey.
 
