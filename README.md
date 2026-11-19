@@ -1095,7 +1095,7 @@ Regular databases store rows and columns. They are good for exact-match queries.
 
 But in AI, we deal with embeddings. An [**embedding**](https://outcomeschool.com/blog/what-are-embeddings) is a long list of numbers (typically 768, 1024, 1536, or 3072 numbers depending on the model) that represents a piece of text in a way that captures its meaning. Two pieces of text that mean similar things get numbers that sit close together. This is what lets us do [**Semantic Search**](https://outcomeschool.com/blog/how-does-semantic-search-work), which means searching by meaning instead of by exact words. Images can be turned into embeddings too, and we have a detailed blog on [how Image Embeddings work](https://outcomeschool.com/blog/how-do-image-embeddings-work).
 
-When we want to find similar pieces of text, we cannot use SQL `WHERE`. We have to compute the similarity between two embeddings using a math formula like [**cosine similarity**](https://outcomeschool.com/blog/cosine-similarity) (which measures how close the two vectors point in the same direction) or **dot product** (which multiplies and sums the numbers in the two vectors). Both give a single similarity score we can sort by.
+When we want to find similar pieces of text, we cannot use SQL `WHERE`. We have to compute the similarity between two embeddings using a math formula like [**cosine similarity**](https://outcomeschool.com/blog/cosine-similarity) (which measures how close the two vectors point in the same direction), **dot product** (which multiplies and sums the numbers in the two vectors), or **Euclidean / L2 distance** (the straight-line distance between the two points). On normalized vectors, cosine and dot product give the same ranking, which is why many systems normalize and use the faster dot product. All give a single score we can sort by.
 
 A normal database is too slow for this. So we use a [**Vector Database**](https://outcomeschool.com/blog/how-does-a-vector-database-work).
 
@@ -1104,27 +1104,42 @@ A Vector DB is specially built to:
 - Store embeddings
 - Search for the most similar embeddings to a given query, very fast
 
-Examples of Vector DBs: Pinecone, Weaviate, Qdrant, Chroma. Some regular databases also have vector support: PostgreSQL with pgvector, MongoDB, and Redis.
+Examples of Vector DBs: Pinecone, Weaviate, Qdrant, Milvus, Chroma. Some regular databases also have vector support: PostgreSQL with pgvector, MongoDB, and Redis.
 
 Internally, Vector DBs use special algorithms called **vector indexes** to make similarity search fast even with millions or billions of vectors.
 
-Comparing the query with every single stored vector one by one is exact, but far too slow at scale. So, vector indexes use [**Approximate Nearest Neighbor (ANN) search**](https://outcomeschool.com/blog/how-does-approximate-nearest-neighbor-ann-search-work). ANN gives up a tiny bit of accuracy to become thousands of times faster. It finds vectors that are almost certainly the closest, without checking all of them.
+Comparing the query with every single stored vector one by one is exact, but far too slow at scale. So, vector indexes use [**Approximate Nearest Neighbor (ANN) search**](https://outcomeschool.com/blog/how-does-approximate-nearest-neighbor-ann-search-work). ANN trades a small, **tunable** amount of recall for a large speedup - we choose where to sit on the speed-versus-accuracy curve.
 
 ### Vector Index Types
 
 Now, let's understand the different types of vector indexes. There are four indexes that come up again and again. Each one has a sweet spot based on dataset size and memory budget.
 
-- **HNSW (Hierarchical Navigable Small World):** Builds a graph and walks it greedily to find nearest neighbors. Fast, accurate, easy to use. Default choice for most teams. Works great when the index fits in RAM (typically up to ~100 million vectors).
+- **HNSW (Hierarchical Navigable Small World):** Builds a graph and walks it greedily to find nearest neighbors. Fast, accurate, easy to use. Default choice for most teams. Works great when the index fits in RAM - comfortably into the tens of millions of vectors on a large machine; beyond that, raw vectors get too big for memory and we lean on quantization or an on-disk index.
 - **IVF (Inverted File Index):** Clusters vectors and only searches the most relevant clusters. Good when memory is tight. Often combined with **PQ (Product Quantization)** to compress vectors. We trade a small recall hit for big memory savings.
 - **DiskANN:** Designed for the case where the index does not fit in RAM. Stores the graph on disk in a way that minimizes random reads. Good for large datasets on a single machine with SSDs.
-- **ScaNN (from Google):** Used at billion-vector scale. Combines quantization (compressing vectors to use less memory) with a smart clustering trick that focuses on the directions that matter most for similarity, giving high recall at huge scale.
+- **ScaNN (from Google):** Used at billion-vector scale. Combines quantization with a loss function that weights quantization error by its effect on the similarity score (**anisotropic quantization**), plus a rescoring step, giving high recall at huge scale.
 
 Rule of thumb:
 
-- Up to ~100 million vectors and the index fits in RAM: use **HNSW**.
+- Up to ~tens of millions of vectors and the index fits in RAM: use **HNSW**.
 - Memory cost dominates and we can absorb a small recall drop: use **IVF + PQ**.
 - Index does not fit in RAM but we have SSDs: use **DiskANN**.
 - Billion-scale vectors: use **ScaNN**.
+
+Two more levers matter in practice:
+
+- **Quantization is a general memory lever**, not just an IVF detail. Scalar quantization (float32 to int8, ~4x smaller) is the safe default; product quantization packs tighter (up to ~64x) at more accuracy cost; binary quantization (1 bit per number) is the most aggressive. All pair well with **rescoring** - over-fetch candidates with the compressed index, then re-rank the top results using the full-precision vectors to recover accuracy.
+- **Recall is a dial, not a fixed value.** HNSW exposes knobs like `ef_search` at query time and `M` / `ef_construction` at build time: raising them buys recall at the cost of latency or build time and memory.
+
+### Metadata Filtering
+
+Real search almost always mixes vector similarity with **metadata filters** - `tenant_id`, `date`, `language`, `category`. There are three ways to combine them:
+
+- **Pre-filter:** apply the filter first, then do similarity search on what is left. Exact, but expensive when many rows pass the filter.
+- **Post-filter:** do ANN first, then drop results that fail the filter. Cheap, but if many top results fail the filter, we can get back fewer results than we asked for.
+- **Single-stage (filtered ANN):** apply the filter *during* graph traversal. This is what production vector DBs do - Qdrant builds a filterable HNSW index with extra edges between points sharing an indexed value, and Pinecone, Weaviate, and Milvus index metadata so filters are applied inside the search.
+
+Filtering is a correctness concern too: a multi-tenant app must filter by tenant so one customer never sees another's vectors.
 
 For most apps, pgvector inside PostgreSQL with HNSW is enough. We do not always need a dedicated vector database.
 
