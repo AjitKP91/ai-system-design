@@ -1625,27 +1625,31 @@ Streaming (SSE)
      | <-- " time" -------------- |
      |        ...                 |
      | <-- " end" --------------- |  ~10 seconds total
-     | <-- [DONE] --------------- |
+     | <-- (connection closes) -- |  (OpenAI first sends data: [DONE])
      |                            |
 ```
 
-In streaming, the user sees the first token at TTFT (under a second) and watches the response build up. In a regular HTTP response, the user stares at a blank screen for 10 seconds and then everything appears at once. Streaming is what makes a slow LLM feel fast. It works perfectly.
+In streaming, the user sees the first token at TTFT (under a second) and watches the response build up. In a regular HTTP response, the user stares at a blank screen for 10 seconds and then everything appears at once. Streaming is what makes a slow LLM feel fast - at the cost of some real operational concerns (buffering, timeouts, reconnection) that we cover below.
 
 There are two main ways to stream. We have a separate detailed blog on [HTTP Request, Long Polling, WebSocket, and SSE](https://outcomeschool.com/blog/http-request-long-polling-websocket-sse) that explains these in depth.
 
 ### Server-Sent Events (SSE)
 
-The most popular way. The client opens an HTTP connection. The server keeps it open and writes chunks as they come. Each chunk is a small message that starts with `data:`, and the stream ends with a special `[DONE]` marker. This is what ChatGPT uses on the web.
+The most popular way. The client opens an HTTP connection and the server responds with `Content-Type: text/event-stream`, keeping the connection open and writing chunks as they come. Each message is a line starting with `data:`. The stream ends simply when the server closes the connection - there is no protocol terminator. (OpenAI's Chat Completions API sends a `data: [DONE]` line first, but that is an API convention, not part of SSE; newer APIs use typed events like `response.completed` or `message_stop`.) In the browser, the native `EventSource` API handles SSE and auto-reconnects on a drop, resending the last `id:` it saw via the `Last-Event-ID` header. This is what ChatGPT's web UI uses.
 
 ### WebSockets
 
-A two-way streaming connection. Used when we also need to receive messages from the client mid-stream (like cancel a request or send more context).
+A two-way streaming connection over its own protocol (`ws://`/`wss://`). Used when we also need to receive messages from the client mid-stream (like cancel a request or send more context). Unlike `EventSource`, WebSocket has no built-in reconnect, so we add our own heartbeat and reconnection logic.
+
+**Which to use:** default to **SSE** for one-way token streaming (simpler, native browser support, auto-reconnect, works over plain HTTP). Use **WebSockets** when the channel is genuinely bidirectional - live voice, or sending input while the model is still responding.
 
 Streaming changes a lot of things in our backend:
 
 - The connection has to stay alive for a long time (sometimes minutes).
-- We cannot use a normal load balancer that times out at 30 seconds. We need to configure long timeouts.
-- We need to handle disconnections gracefully (the user closes the tab).
+- We cannot use proxies or load balancers with short **idle/read timeouts**, and we must turn off **response buffering** (for example Nginx `proxy_buffering off`, or have the app send `X-Accel-Buffering: no`), or the proxy holds the whole response and defeats streaming. This is the single most common streaming bug.
+- We need to handle disconnections gracefully (the user closes the tab). On disconnect, **cancel the LLM call server-side** so we stop paying for output tokens.
+- To truly resume after a drop, **persist the generated tokens server-side** and replay from the last delivered event id; otherwise the user loses the answer.
+- SSE is unidirectional (server to client only), and on HTTP/1.1 a browser allows only about 6 connections per domain - HTTP/2 multiplexing removes that limit.
 
 ## Async Processing for Long AI Tasks
 
