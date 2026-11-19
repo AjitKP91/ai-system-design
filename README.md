@@ -3972,6 +3972,10 @@ RAG gives the model new knowledge, like our company documents. Fine-tuning gives
 
 Use a fixed workflow (AI Orchestration) when the steps are known in advance. It is more predictable, cheaper, and easier to debug. Use an AI Agent only when the steps cannot be known in advance and the LLM must decide what to do next. In real systems, we often use a fixed workflow for the overall flow, and an agent inside one open-ended step.
 
+### When do I need a multi-agent system?
+
+Start with a single agent. Reach for multiple agents only when the single agent clearly cannot do the job. Multi-agent wins on tasks that are **parallelizable and breadth-first** (like research across many independent sources), but it costs far more - Anthropic reported its multi-agent research system used roughly 15x the tokens of a plain chat. It is a poor fit for **tightly coupled** work where later steps depend on earlier decisions (most coding and editing), because agents with separate contexts make conflicting choices. When in doubt, prefer a single thread with shared context.
+
 ### How do we reduce the cost of an LLM application?
 
 Route easy queries to cheaper models, use prompt caching for long repeated prompts, use a semantic cache for repeated questions, keep outputs short, use batch APIs for non-urgent jobs, retrieve fewer but better chunks in RAG, and self-host small models for high-volume simple tasks.
