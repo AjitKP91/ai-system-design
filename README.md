@@ -758,15 +758,53 @@ We pick the scaling strategy based on our model size and traffic:
 
 ## Auto Scaling for AI
 
-This is similar to regular auto scaling, but with one big difference.
+Auto scaling for AI follows the same idea as normal auto scaling - add servers when busy, remove them when idle - but with two twists that change everything: **what we measure** and **how fast we can react**.
 
-In regular auto scaling, we add a new EC2 instance (a virtual server on AWS) when CPU usage crosses a threshold. This takes 30 seconds to 2 minutes.
+### What metric do we scale on?
 
-In AI, when we add a new inference server, the GPU has to load the model first. A 70B model can take anywhere from 1 to 10 minutes to load into GPU memory, depending on whether the weights live on local SSD, network storage, or remote object storage. So we cannot just spin up a new GPU when traffic suddenly spikes.
+In regular auto scaling, we add a new server when CPU usage crosses a threshold. For GPU inference, CPU is the wrong signal - and even **GPU utilization is misleading**. A memory-bandwidth-bound decode can show high GPU utilization while barely serving any users, and inference servers like vLLM and TGI preallocate GPU memory and never free it, so GPU memory only ever triggers scale-up, never scale-down.
 
-So, here comes the **warm pool** to the rescue. We keep some inference servers always warm (always running, model already loaded). When traffic spikes, we route to these warm pools first, and in the background, we spin up more machines.
+Instead, production systems scale on request-level signals:
 
-So in AI, auto scaling is slower and more careful. We always keep extra capacity ready because cold starts are very expensive.
+- **Queue depth / pending requests** (the most recommended signal). Google's GKE guidance suggests scaling on the number of waiting requests, starting around 3 to 5 per replica. vLLM exposes this directly as the `vllm:num_requests_waiting` metric.
+- **Concurrency per replica** - the average number of in-flight requests per server. Ray Serve scales on `target_ongoing_requests` (default 2); Knative (used by KServe) scales on concurrency or requests per second.
+- **Running batch size** - reacts faster than queue depth for latency-sensitive workloads.
+- **Advanced: hold an SLO** - scale to keep a TTFT or inter-token-latency target, using KV-cache occupancy (`vllm:gpu_cache_usage_perc`) as a saturation proxy.
+
+The one-line takeaway: **don't scale on CPU or GPU utilization - scale on queue depth and concurrency, optionally gated by a latency SLO.**
+
+### Reacting is slow: the cold start
+
+Spinning up a new inference replica is not like booting a web server. A cold start can include, in series:
+
+- **GPU node provisioning** from the cloud - and GPUs are often scarce, so you may wait or get nothing.
+- **Container image pull** - CUDA and framework images are many GB.
+- **Weight load** into GPU memory - a 70B model is ~140 GB in fp16, roughly 30 seconds from local NVMe but several minutes from remote object storage, so a total cold start of **1 to 10 minutes** is normal.
+- **Warmup** - CUDA graph capture, `torch.compile`, and autotuning before the first token is served.
+
+### The fix: keep capacity warm, and shrink cold starts
+
+The simplest fix is a **warm pool**: keep extra inference servers already running with the model loaded, route spikes to them immediately, and boot new replicas in the background. The tradeoff is cost - idle GPUs are expensive, so a warm pool is insurance you pay for.
+
+We can also make cold starts shorter:
+
+- **Stream the weights** directly from storage into the GPU while still reading them (tools like Run:ai Model Streamer and CoreWeave Tensorizer reach ~5 GB/s), instead of load-then-start.
+- **Cache weights on local NVMe** so a new replica on a warm node skips the slow remote fetch.
+- **Don't bake weights into the container image**, and pre-pull base images onto nodes.
+- **Quantize** (fp8/int4) - fewer bytes to move means a faster load and a smaller KV cache.
+- **Pre-provision / over-provision nodes** with low-priority placeholder pods that get evicted when real work arrives, keeping node provisioning and image pull off the critical path.
+
+### Scale-to-zero vs always-warm
+
+This is the central cost/latency tradeoff. **Scale-to-zero** saves money when a model is idle, but every request after idle pays the full cold start - AWS SageMaker, for example, supports a minimum of zero instances but warns the first request can take several minutes and will error until capacity is up. So use scale-to-zero for spiky, dev, or low-traffic models, and keep a minimum of one or more warm replicas for anything with a latency SLO. For predictable daily patterns, **scheduled/predictive scaling** pre-scales ahead of the spike instead of reacting to it.
+
+### Who actually does the scaling
+
+- **Kubernetes HPA:** the default autoscaler; feed it the queue-depth custom metric (via a Prometheus adapter). It cannot scale to zero by default.
+- **KEDA:** event-driven; runs a PromQL query like `vllm:num_requests_waiting` against a threshold and supports true scale-to-zero.
+- **Knative / KServe:** scales on concurrency or RPS with built-in scale-to-zero.
+
+Finally, autoscaling pairs with smart routing: sending each request to the replica that already holds the relevant KV cache (prefix-aware routing, covered in [Load Balancing for LLM Servers](#load-balancing-for-llm-servers)) reduces the load that would otherwise force a scale-up.
 
 ## Back-of-the-envelope Estimation for AI
 
