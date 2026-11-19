@@ -2970,6 +2970,7 @@ In AI systems, we monitor a lot more:
 - **Tool call success rate** (in agentic systems, how often does each tool succeed)
 - **Cache hit rate** (KV cache, prompt cache, semantic cache)
 - **GPU utilization** (are our expensive GPUs idle or fully used)
+- **Alerts and drift** - we do not just watch dashboards; we alert on quality regressions, cost spikes, latency p95 breaches, and error-rate jumps, and track how metrics drift over time.
 
 Observability tools for AI: Langfuse, Helicone, Arize Phoenix, LangSmith, Weights & Biases.
 
@@ -2984,9 +2985,9 @@ For AI Agents, this becomes even more important, because one user request can tu
 
 Let's say a user asks a flight booking agent to book a flight. That full run is one **trace**. Inside it, each step is a **span**: receive the request, the LLM decides to search, call the flight search tool, read the results, the LLM picks the cheapest flight, call the booking tool, return the confirmation. Each span records the input, the output, the time taken, the tokens, and any error. Spans can be nested, so the trace becomes a tree that shows the full structure of the agent's work.
 
-When something goes wrong, we open the trace and see exactly which step failed and why. The industry standard for this is **OpenTelemetry**, and most AI observability tools support it.
+When something goes wrong, we open the trace and see exactly which step failed and why. The industry standard for this is **OpenTelemetry**, which now defines **GenAI semantic conventions** - standardized `gen_ai.*` span attributes (operation name, model, input/output token usage, tool and agent calls) so traces are portable across tools. These conventions are still evolving (currently experimental), but most AI observability tools already support them.
 
-**Note:** Observability tells us what the agent did. Evaluation tells us how good it was. Observability comes first and gives us the raw data. Evaluation then uses that data to score the system.
+**Note:** Observability tells us what the agent did. Evaluation tells us how good it was. Observability comes first and gives us the raw data. Evaluation then uses that data to score the system. Cheap online signals like user thumbs up/down, edits, and regenerations are captured here too (often as feedback "scores") and feed directly into evaluation.
 
 ## Evaluation Pipeline
 
