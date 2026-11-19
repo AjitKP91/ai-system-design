@@ -379,6 +379,8 @@ At every step, the model does not know the next token for sure. It gives a proba
 
 Internally, the LLM is a [Transformer](https://outcomeschool.com/blog/decoding-transformer-architecture) - a stack of attention and feed-forward layers. The single most important idea inside it is the **attention mechanism**, where each token converts itself into three vectors - **Query (Q)**, **Key (K)**, and **Value (V)** - and uses them to figure out which previous tokens matter most for predicting the next one. We have a detailed blog on the [math behind Attention - Q, K, and V](https://outcomeschool.com/blog/math-behind-attention-qkv) that goes into the math step by step.
 
+Because every token attends to every previous token, the compute cost of attention grows roughly with the **square of the sequence length**. This single fact is why long prompts are slow and expensive, and why a large part of AI System Design - KV Cache, Flash Attention, and context window management - exists to tame this cost.
+
 When we use an API like OpenAI, Anthropic, or Google, we send a prompt, and we get a streamed response back, one token at a time.
 
 Examples of LLMs: GPT-5.5, Claude Opus 4.8, Gemini 3.5, Llama 4, Mistral.
