@@ -3827,9 +3827,11 @@ These are the most common AI System Design interview questions. For each one, th
 - **Design an AI coding agent like Claude Code or Cursor.** The agent loop, tool calling, codebase RAG, sandboxing, permissions, SubAgents, context compaction, and verification with tests.
 - **Design a real-time voice AI agent.** Streaming STT, LLM, and TTS, the latency budget, turn detection, barge-in, telephony, and tool calling.
 - **Design a multi-agent research assistant.** Orchestrator and workers, SubAgents, parallel coordination, shared memory, cost limits, and tracing.
+- **Design an AI assistant that takes actions (e.g., books travel or triages and sends email).** Tool calling, human-in-the-loop approval, guardrails, idempotency and safe retries, state and rollback, and confirmation before irreversible actions.
 - **Design an LLM inference platform for many teams.** vLLM or SGLang, GPU autoscaling with warm pools, load balancing by outstanding tokens, prefix-aware routing, prefill-decode disaggregation, and multi-tenancy.
 - **Design an AI Gateway for a company.** Multi-provider failover, rate limiting on tokens and cost, caching, guardrails, audit logs, and observability.
-- **Design a document question-answering system for long legal contracts.** Document parsing, structure-aware chunking, Vectorless RAG or GraphRAG, and faithfulness evals.
+- **Design a document question-answering system for long legal contracts.** Document parsing, structure-aware chunking, long-context (vectorless) RAG or GraphRAG, clause-level citations, and faithfulness evals.
+- **Design enterprise Q&A over mixed data (databases + documents).** Query routing, text-to-SQL with schema linking, structured plus unstructured retrieval, result fusion, and row/doc-level access control.
 - **Design a semantic cache for LLM responses.** Embeddings, vector search, the similarity threshold, per-tenant isolation, and invalidation.
 - **Design an on-device AI assistant.** Small Language Models, quantization, distillation, and hybrid on-device and cloud routing.
 - **Design an evaluation and monitoring pipeline for an LLM product.** Eval sets, LLM as a Judge, agent trajectory evaluation, traces and spans, and alerts on cost and quality.
