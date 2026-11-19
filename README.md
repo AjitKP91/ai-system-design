@@ -261,7 +261,15 @@ In simple words:
 
 **AI System Design = System Design + The new constraints of AI models.**
 
-The new constraints are GPUs, tokens, long and streamed responses, non-deterministic output, and a real cost on every single request. AI System Design is how we design caches, queues, databases, gateways, retrieval, agents, guardrails, and evals around these constraints.
+The new constraints are:
+
+- **GPUs** - the model runs on expensive, limited hardware, not ordinary CPUs.
+- **Tokens** - both input and output are billed per token.
+- **Long and streamed responses** - a single call can take seconds to minutes and arrives token by token.
+- **Non-deterministic output** - the same input can produce different results.
+- **A real cost on every single request** - every call spends money.
+
+AI System Design is how we design caches, queues, databases, gateways, retrieval, agents, guardrails, and evals around these constraints.
 
 Let's say we want to build a customer support chatbot. Calling an LLM API in a script takes ten lines of code. But serving 100,000 users with an answer that starts in under a second, stays grounded in our own documents, never leaks private data, and fits within a monthly budget - that is AI System Design.
 
