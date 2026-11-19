@@ -1682,17 +1682,19 @@ Step by step:
 
 **Step 1:** The client sends the request.
 
-**Step 2:** The backend immediately responds with `{ "job_id": "12345", "status": "processing" }`.
+**Step 2:** The backend enqueues the job and immediately responds with `{ "job_id": "12345", "status": "processing" }`.
 
-**Step 3:** The backend puts the job in a message queue.
+**Step 3:** A background worker picks up the job from the queue and runs it.
 
-**Step 4:** A background worker picks up the job and runs it.
+**Step 4:** When done, the worker stores the result in a database.
 
-**Step 5:** When done, the worker stores the result in a database.
+**Step 5:** The client polls the status using the Job ID, or gets a webhook callback.
 
-**Step 6:** The client polls the status using the Job ID, or gets a webhook callback.
+Structurally this is ordinary async processing, but AI tasks run for minutes to hours, can be expensive, and may run more than once, so idempotency, progress reporting, and result expiry matter more than in a typical job.
 
-This is the same pattern as regular async processing, but the tasks are AI tasks (LLM calls, embeddings, transcription, etc.).
+**Managed batch APIs.** For large bulk jobs that can tolerate delay, we often do not need our own queue at all: OpenAI's Batch API and Anthropic's Message Batches API accept thousands of requests, process them asynchronously within a 24-hour window, and charge about 50% less than synchronous calls. Use these for offline or bulk work; use our own queue when we need control over the workers, custom steps (transcription, chunking), or sub-hour SLAs.
+
+**Polling vs webhooks.** Polling is simplest but wastes calls and adds latency; webhooks are efficient but need a public, signature-verified endpoint with its own retry handling. Either way, give stored results a TTL - do not keep large report or transcript blobs forever (the batch APIs above expire results after about 29 to 30 days). And accept an idempotency key on the submit call so a client retry does not spawn a second expensive job.
 
 ## Message Queues in AI Systems
 
