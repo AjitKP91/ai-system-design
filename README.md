@@ -2064,7 +2064,7 @@ To learn AI Agents, Agentic AI, Tool Use, Memory, MCP, Subagents, and Multi-Agen
 
 Tool calling is how the LLM tells us "please call this function for me".
 
-The LLM gets a list of available tools as part of its prompt. Each tool has a **name**, a **description**, and an **input schema**.
+The LLM gets a list of available tools as part of its prompt. Each tool has a **name**, a **description**, and an **input schema** (OpenAI calls the schema field `parameters`; the idea is identical).
 
 Here is what a tool definition looks like in practice:
 
@@ -2091,13 +2091,15 @@ Here is what a tool definition looks like in practice:
 
 Here, the LLM reads the `name` to identify the tool, the `description` to decide **when** to recommend it, and the `input_schema` to know **what arguments** to pass and in what format. The `description` is the most important field - every word matters, because this is what the LLM uses to pick between tools. A vague description leads to the wrong tool being picked. A precise description leads to the right one.
 
-When the LLM decides to recommend a tool, it returns a structured output that names the tool and gives the arguments. Our code parses this, runs the actual search, and feeds the result back as the next message. It works perfectly.
+When the LLM decides to recommend a tool, it returns a structured output that names the tool and gives the arguments. Our code parses this, runs the actual search, and feeds the result back as the next message.
+
+On its own, the model can produce missing, extra, or wrong-typed arguments. Both OpenAI (`strict: true` with Structured Outputs) and Anthropic (strict tool use, `strict: true`) can force the arguments to match the JSON Schema exactly, which removes a whole class of invalid-argument bugs. In one turn the model can also request several tool calls at once; the loop runs them (often in parallel) and feeds all the results back before calling the model again. And when a tool fails, we return the error as a structured tool result (Anthropic marks it with `is_error: true`; OpenAI puts the error in the function output) so the model can see what went wrong and retry, instead of crashing the loop - just remember these results re-enter the context and cost tokens, so trim noisy output.
 
 This is called [**function calling**](https://outcomeschool.com/blog/how-does-function-calling-work-in-llms) or **tool calling**. Both names mean the same thing. It is the foundation of all agentic AI.
 
 **Note:** The LLM never runs the tool itself. It only returns the name of the tool and the arguments. Our code runs the tool. This is an important security boundary, because it means our code can validate every argument and refuse any action before it happens.
 
-In an agentic system, designing good tools is more important than the model choice. Bad tools (vague names, unclear parameters, noisy outputs) make even the smartest model behave badly.
+In an agentic system, designing good tools is more important than the model choice. Bad tools (vague names, unclear parameters, noisy outputs) make even the smartest model behave badly. Selection accuracy also drops as the number of tools grows - OpenAI suggests keeping it under about 20, and Anthropic offers a tool-search tool for larger sets. Beyond that, we retrieve or namespace a relevant subset, which is exactly what the next section's standard helps with.
 
 ## Model Context Protocol (MCP)
 
