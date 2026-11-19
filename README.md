@@ -281,7 +281,7 @@ This AI System Design guide is for:
 In this AI System Design guide, we will learn:
 
 - **The foundations:** how AI System Design differs from regular System Design, tokens, the inference server, choosing an inference engine, and the hardware (GPU, TPU, LPU).
-- **LLM inference:** prefill vs decode, TTFT, TPOT, throughput, chunked prefill, and prefill-decode disaggregation.
+- **LLM inference:** prefill vs decode, TTFT, TPS/TPOT, throughput, chunked prefill, and prefill-decode disaggregation.
 - **Scaling:** vertical and horizontal scaling, tensor parallelism, pipeline parallelism, auto scaling with warm pools, back-of-the-envelope estimation, and load balancing for LLM servers.
 - **Caching:** KV Cache, Paged Attention, KV Cache Compression, Prompt Cache, Semantic Cache, and Embedding Cache.
 - **LLM Routing:** rule-based, classifier-based, embedding-based, LLM-as-router, and cascade routing.
