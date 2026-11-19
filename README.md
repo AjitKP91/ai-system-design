@@ -303,6 +303,7 @@ In this AI System Design guide, we will learn:
 - If we are new to AI System Design, we read it from top to bottom. Each section builds on top of the previous one.
 - If we are preparing for an interview, we read [How to Solve Any AI System Design Problem](#how-to-solve-any-ai-system-design-problem) first, and then come back to the building blocks.
 - If we want to go deep into any topic, we open the linked blog. Every linked blog explains one concept from the ground up.
+- If we need a quick refresher or hit an unfamiliar term, we use the [Key Concepts Glossary](#ai-system-design-key-concepts-glossary) and the [FAQs](#ai-system-design-faqs).
 - After every section, we try to explain it to a friend in our own words. If we can explain it, we have learned it.
 
 ## AI System Design Learning Path
