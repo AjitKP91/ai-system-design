@@ -179,6 +179,7 @@
 - [Data Privacy and Compliance](#data-privacy-and-compliance)
   - [PII Redaction](#pii-redaction)
   - [Data Residency](#data-residency)
+  - [Right to Erasure (GDPR Article 17)](#right-to-erasure-gdpr-article-17)
   - [No-Train and BAA Clauses](#no-train-and-baa-clauses)
   - [Voice and Multimodal Privacy](#voice-and-multimodal-privacy)
   - [Audit Logs](#audit-logs)
@@ -2930,6 +2931,8 @@ The first line of defense is to never let sensitive data reach the LLM in the fi
 
 The same redaction runs on the LLM output. If the model leaks any PII (sometimes from its training data), we catch it on the way out.
 
+Redaction is a risk-reducer, not a guarantee. Detectors miss PII (false negatives), can over-redact and garble meaning, and the restore step can re-leak real values - Microsoft Presidio itself warns there is "no guarantee [it] will find all sensitive information" and that additional protections should be used. Layer it; do not rely on it alone.
+
 Tools: Microsoft Presidio, Gravitee PII Filtering, Tonic.ai, Private AI.
 
 ### Data Residency
@@ -2940,12 +2943,19 @@ Many regulations (GDPR, India's **DPDP (Digital Personal Data Protection Act)**,
 - Make sure logs, vector DBs, blob storage, and caches all stay in the same region as the user.
 - Have a clear data flow diagram for every customer who asks.
 
+### Right to Erasure (GDPR Article 17)
+
+Users can demand deletion of their personal data "without undue delay." This is hard for AI systems because one user's data is scattered across the vector DB, caches, request logs, backups, and any fine-tuned models - we cannot just delete one row. Design a deletion path from day one: track data lineage per user so we can actually purge every copy, not just the primary store.
+
 ### No-Train and BAA Clauses
 
 Two contractual checkboxes that matter:
 
-- **No-train clause:** The model provider must not train future models on our prompts and responses. All major providers offer this on enterprise plans.
+- **No-train clause:** For commercial/API usage, the major providers do not train on our prompts and responses **by default** (OpenAI since March 2023; Anthropic per its commercial terms). The contractual no-train clause makes that guarantee explicit and durable.
+- **Zero-Data-Retention (ZDR):** A stronger control where the provider retains *nothing* - prompts and outputs are not stored at all. OpenAI and Anthropic both offer ZDR for approved accounts (otherwise default API retention is around 30 days). Use it for the most sensitive workloads. (No-train means they will not learn from your data; ZDR means they will not keep it - two different, stackable controls.)
 - **BAA (Business Associate Agreement):** Required for HIPAA workloads. Without a BAA, we cannot legally send **PHI (Protected Health Information)** to the provider.
+
+Enterprise buyers also expect **SOC 2 Type II** and **ISO 27001** attestations from both our service and our model provider.
 
 ### Voice and Multimodal Privacy
 
@@ -2953,7 +2963,7 @@ Voice data is especially leaky. A single voice call can leave traces in transcri
 
 ### Audit Logs
 
-We log every LLM request along with the user, the redacted prompt, the redacted response, and the policy decisions. These logs are the evidence we need when a regulator asks "show me what happened on this date for this user". Logs are retained per the regulation that applies (often 6 months to 7 years).
+We log every LLM request along with the user, the redacted prompt, the redacted response, and the policy decisions. These logs are the evidence we need when a regulator asks "show me what happened on this date for this user". Logs are retained per the regulation that applies (often 6 months to 7 years). Retention windows must also coexist with erasure requests - we need a way to purge or redact a specific user from the logs on demand.
 
 In short: **privacy and compliance are a layer of the system, not a checklist.** They touch every other layer (gateway, guardrails, observability, storage), and they have to be designed in from day one.
 
