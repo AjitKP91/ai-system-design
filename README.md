@@ -344,6 +344,8 @@ A single API call cannot handle all of this.
 
 To make our AI product reliable, fast, cheap, and safe, we have to think about many things together. This is where **AI System Design** comes into the picture.
 
+This guide tackles each of these problems directly: [latency](#tokens-latency-and-throughput), [GPU and token cost](#cost-optimization), [hallucinations and safety](#guardrails-and-safety), and [scale](#scaling-ai-systems).
+
 ## How is AI System Design different from regular System Design?
 
 In regular [system design](https://outcomeschool.com/blog/system-design), we deal with CPU, RAM, disk, databases, and network.
