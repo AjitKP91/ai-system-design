@@ -86,7 +86,7 @@
   - [GPU Estimation](#gpu-estimation)
   - [Cost Estimation](#cost-estimation)
 - [Load Balancing for LLM Servers](#load-balancing-for-llm-servers)
-  - [Least Outstanding Tokens](#least-outstanding-tokens)
+  - [Least Outstanding Requests](#least-outstanding-requests)
   - [Prefix-Aware Routing](#prefix-aware-routing)
   - [Sticky Sessions](#sticky-sessions)
 - [Caching in AI](#caching-in-ai)
@@ -821,9 +821,9 @@ Because LLM requests are not equal. One request can take 1 second (short answer)
 
 So in AI, we use smarter load balancing.
 
-### Least Outstanding Tokens
+### Least Outstanding Requests
 
-The load balancer tracks how many tokens each server is currently generating. The next request goes to the server with the fewest outstanding tokens. This is much more accurate than counting connections.
+The load balancer routes to the server with the least in-flight work. A naive version counts open connections, but LLM routers do better by using live signals the model servers report - the number of queued and running requests, and current KV-cache utilization - since one 60-second request ties up a server far more than one short request. (This is sometimes loosely called "least outstanding tokens," but what servers actually expose is queue depth and KV-cache usage, not a live token count.)
 
 ### Prefix-Aware Routing
 
@@ -835,7 +835,19 @@ Example: A coding assistant has the same 5000-token system prompt for every requ
 
 For a long conversation with the same user, we sometimes want to send all requests of that user to the same server, so the conversation history stays warm in cache.
 
-So in AI, the load balancer is much smarter than in regular system design.
+**Caveat: affinity and load balancing pull in opposite directions.** If every request shares one hot prefix, or one session is very active, naive affinity sends all that traffic to a single server and overloads it. So real routers blend a **cache-hit score** with the server's **current load** and fall back to a less-loaded server once imbalance crosses a threshold (for example, SGLang's router switches from "prefer cache" to "balanced" mode, and NVIDIA Dynamo factors the KV-overlap score together with workload distribution).
+
+### KV-Cache-Aware Routing and the Inference Gateway
+
+Prefix matching is one heuristic of a broader idea: **KV-cache-aware routing**, where the router scores each server by how much of the request's KV cache it already holds. In practice this lives in a model-aware inference gateway rather than a generic L7 load balancer:
+
+- **SGLang** uses RadixAttention (a radix tree of cached prefixes on each server) and a `cache_aware` router policy, falling back to power-of-two-choices when no server has a useful cached prefix.
+- **NVIDIA Dynamo** has a KV-aware "smart router" that computes an overlap score between the request and active KV-cache blocks, blended with load.
+- **llm-d** and the **Kubernetes Gateway API Inference Extension / GKE Inference Gateway** (built on Envoy) pick an endpoint using real-time model-server metrics - KV-cache affinity, queue depth, and latency predictions together.
+
+This is also where load balancing connects to [prefill-decode disaggregation](#prefill-decode-disaggregation): the router can send prefill and decode to separate worker pools and reuse the KV cache across them.
+
+So an LLM load balancer blends three signals - cache/prefix affinity, current load (queue depth plus KV-cache utilization), and sometimes the prefill/decode role - rather than blindly spreading requests.
 
 ## Caching in AI
 
@@ -3827,7 +3839,7 @@ These are the most common AI System Design interview questions. For each one, th
 - **Design an AI coding agent like Claude Code or Cursor.** The agent loop, tool calling, codebase RAG, sandboxing, permissions, SubAgents, context compaction, and verification with tests.
 - **Design a real-time voice AI agent.** Streaming STT, LLM, and TTS, the latency budget, turn detection, barge-in, telephony, and tool calling.
 - **Design a multi-agent research assistant.** Orchestrator and workers, SubAgents, parallel coordination, shared memory, cost limits, and tracing.
-- **Design an LLM inference platform for many teams.** vLLM or SGLang, GPU autoscaling with warm pools, load balancing by outstanding tokens, prefix-aware routing, prefill-decode disaggregation, and multi-tenancy.
+- **Design an LLM inference platform for many teams.** vLLM or SGLang, GPU autoscaling with warm pools, load-aware routing by queue depth and KV-cache utilization, prefix-aware routing, prefill-decode disaggregation, and multi-tenancy.
 - **Design an AI Gateway for a company.** Multi-provider failover, rate limiting on tokens and cost, caching, guardrails, audit logs, and observability.
 - **Design a document question-answering system for long legal contracts.** Document parsing, structure-aware chunking, Vectorless RAG or GraphRAG, and faithfulness evals.
 - **Design a semantic cache for LLM responses.** Embeddings, vector search, the similarity threshold, per-tenant isolation, and invalidation.
