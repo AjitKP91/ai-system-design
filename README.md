@@ -512,7 +512,7 @@ The same speed is often measured the other way around, as **TPOT (Time Per Outpu
 
 This is the total number of tokens the inference server can produce per second across all users.
 
-Example: If 100 users are using the system at the same time, and each one is getting 20 tokens per second, the total throughput is 2000 tokens per second.
+Example: If 100 users are using the system at the same time, the server might produce around 2000 tokens per second in total. But aggregate throughput is **not** simply users times per-user speed. As more users share the same GPU, total tokens per second goes up, but each individual user's TPS goes down, because the GPU is shared and decode is memory-bandwidth-bound. Batching trades per-user latency for total throughput.
 
 A good AI system has:
 
@@ -522,6 +522,12 @@ A good AI system has:
 
 These three are in tension with each other. If we batch many requests together, throughput goes up but TTFT goes up too. We will see this trade-off later in continuous batching.
 
+A few more metrics come up constantly in real systems and interviews:
+
+- **Percentile latency (p50, p95, p99):** Averages hide the slow requests. Service-level objectives (SLOs) are written on the tail, for example "p99 TTFT under 1 second," not on the average.
+- **End-to-end latency (time to last token):** What the user actually feels for a full answer. It is roughly `TTFT + (output tokens x TPOT)`. TTFT and TPS are just its two components.
+- **Goodput:** The throughput that actually meets our latency SLO, not raw tokens per second. A huge batch can inflate raw throughput while blowing the per-user latency target, so goodput is the number that matters.
+
 ### Cost per Token
 
 Every request costs money based on the number of tokens.
@@ -529,8 +535,8 @@ Every request costs money based on the number of tokens.
 Modern LLM APIs now bill on three categories of tokens:
 
 - **Input tokens:** The text we send into the model. Cheapest to compute because they are processed in parallel.
-- **Output tokens:** The text the model generates. Roughly 4x to 5x more expensive than input tokens because they are produced sequentially, one token at a time.
-- **Reasoning tokens:** The hidden "thinking" tokens used by [reasoning models](https://outcomeschool.com/blog/large-reasoning-models) (like the o1 and o3 family). They never appear in the visible response, but we are billed for them. For some hard prompts, reasoning tokens can be 10x or more than the visible output.
+- **Output tokens:** The text the model generates. Typically 4x to 8x more expensive than input tokens (commonly around 5x; frontier and reasoning-tilted models skew toward the higher end) because they are produced sequentially, one token at a time.
+- **Reasoning tokens:** The hidden "thinking" tokens used by [reasoning models](https://outcomeschool.com/blog/large-reasoning-models) (such as GPT-5, Claude with extended thinking, and Gemini thinking). They never appear in the visible response, but we are billed for them at the output-token rate. For some hard prompts, reasoning tokens can be 10x or more than the visible output.
 
 Example: Suppose a model charges $3 per 1 million input tokens and $15 per 1 million output tokens. If a user sends 1000 input tokens and gets 500 output tokens back, the cost of that one request is:
 
@@ -541,6 +547,12 @@ Example: Suppose a model charges $3 per 1 million input tokens and $15 per 1 mil
 ```
 
 If we are using a reasoning model, we have to add the cost of reasoning tokens too, which can be much larger than the visible output for hard prompts.
+
+The sticker price per token is only the starting point. Three levers move real bills a lot:
+
+- **Prompt / prefix caching:** Reused input (a long system prompt, a RAG prefix, earlier turns) is billed at a fraction of normal input - cache reads are roughly 10% of the input price (even lower on some models). Note the asymmetry: writing to the cache costs a premium (around 1.25x to 2x), so caching only pays off when the prefix is reused.
+- **Batch APIs:** Submitting work asynchronously instead of in real time is about 50% cheaper across the major providers. Great for evals, backfills, and other non-latency-sensitive jobs.
+- **Context-length price tiers:** Some providers raise the per-token price above a threshold (for example, above 200k input tokens). Long prompts are not just slower, they can be billed in a higher tier.
 
 In AI System Design, we watch cost the same way we watch latency. Every dashboard, every alert, every postmortem includes the dollar number.
 
