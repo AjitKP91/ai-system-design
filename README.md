@@ -770,11 +770,12 @@ So in AI, auto scaling is slower and more careful. We always keep extra capacity
 
 ## Back-of-the-envelope Estimation for AI
 
-In AI System Design interviews, we estimate three things:
+In AI System Design interviews, we estimate four things:
 
 1. Token Estimation
 2. GPU Estimation
 3. Storage Estimation (for vector DB, embeddings, logs)
+4. Cost Estimation
 
 Let's take an example. We are building a ChatGPT-like product. Suppose we have 10 million daily active users, and each user has 5 conversations per day with an average of 2000 input tokens and 500 output tokens per conversation.
 
@@ -788,16 +789,45 @@ Total tokens per day = 125 billion tokens
 
 ### GPU Estimation
 
-Suppose one H100 GPU can produce 5000 tokens per second on a Llama-70B-class model.
+First, a key distinction: **per-request speed** (how fast one user's answer streams, maybe 30 to 150 tokens/sec) is not the same as **aggregate throughput** (total tokens/sec across all users on a GPU with batching, which is far higher). We size GPUs on aggregate throughput.
+
+Suppose one H100 can serve an **8B-class model** (which fits comfortably in its 80 GB) at about 5000 tokens per second of aggregate, batched throughput.
 
 ```
 Tokens per H100 per day = 5000 * 60 * 60 * 24 = 432 million tokens per day
 Total H100 GPUs needed  = 25 billion / 432 million = ~58 GPUs (just for output)
 ```
 
-For input processing, we usually need fewer GPUs because input tokens are processed in parallel (we will see this in continuous batching).
+Two caveats keep this honest:
 
-So roughly 60 to 100 H100 GPUs are needed.
+- We sized on **output tokens only**. Input/prefill (100 billion/day here, 4x larger) also uses GPU time, but decode usually dominates serving wall-clock, so sizing on output is a reasonable simplification - just state it.
+- A bigger model changes the unit. A **70B model does not fit on one H100** (~140 GB of weights), so it runs on a **node of 4 to 8 H100s** with tensor parallelism, delivering roughly 20,000+ tokens/sec aggregate per node (NVIDIA MLPerf) but far less per single user. Then our "GPU count" becomes a "node count."
+
+The 58 above is an **average**. Real traffic peaks at roughly 2 to 3x the average, and we cannot run GPUs at 100 percent utilization, so we size for `peak QPS / target utilization`. That headroom is what turns 58 into the **roughly 60 to 100 H100 GPUs** we actually provision.
+
+### Storage Estimation
+
+Three buckets usually matter: the vector DB, logs/traces, and raw objects.
+
+**(a) Vector DB / embeddings.** The base formula is `bytes = num_vectors x dimensions x bytes_per_dim`, then multiplied by an index/overhead factor. A common rule (Weaviate) is `memory ≈ 2 x (num_vectors x dimensions x 4 bytes)` for float32, where the 2x covers the HNSW graph and headroom.
+
+```
+100M chunks * 1024 dims * 4 bytes (fp32) = ~410 GB raw
+With ~2x HNSW/overhead                    = ~820 GB (~0.8 TB) of RAM
+```
+
+Quantizing vectors to int8 (1 byte/dim) cuts the raw size to ~100 GB; product or binary quantization cuts it further, at some recall cost. HNSW indexes are usually held in RAM, so this drives memory, not just disk.
+
+**(b) Logs / observability.** `storage = avg_trace_size x requests_per_day x retention_days`. A full LLM request trace (prompt + completion + metadata) is roughly 5 to 50 KB.
+
+```
+50M requests/day * 10 KB = ~500 GB/day
+At 30-day retention        = ~15 TB
+```
+
+This often dwarfs the vector DB, so retention and sampling are the main levers.
+
+**(c) Raw document / object storage.** `num_docs x avg_doc_size` for the source corpus, plus the chunked text backing the vectors. This usually lives in cheap object storage (like S3) and is the largest but least costly tier.
 
 ### Cost Estimation
 
@@ -806,6 +836,8 @@ H100 cost per hour = $3 (rented)
 Daily cost  = 60 * 24 * 3 = $4320 per day
 Monthly cost = ~$130,000 per month
 ```
+
+(Rented H100 runs about $2 to $4 per hour in 2026 depending on provider and commitment; $3 is a fair mid-point.)
 
 This is for the inference alone. Storage, vector DB, observability, etc. add more cost.
 
