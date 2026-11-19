@@ -1706,9 +1706,16 @@ Common usage:
 - **Long agent runs:** An agent can take 5 minutes. We put the run in a queue and the worker handles it.
 - **Bulk inference:** We have 10000 customer reviews to summarize. We put them all in a queue and have many workers process them in parallel.
 
-Tools used: AWS SQS, RabbitMQ, Apache Kafka, Redis Streams.
+Tools used: AWS SQS, RabbitMQ, Apache Kafka, Redis Streams (a lightweight option with consumer groups, like a mini-Kafka, handy when we already run Redis).
 
-Kafka shines when many independent consumers need to read the same stream of messages (for example, an indexing worker and an analytics worker both reading every uploaded document). SQS and RabbitMQ shine when each message should be processed by exactly one worker (a classic job queue). We pick based on the consumption pattern, not the AI part.
+Kafka shines when many independent consumers need to read the same stream of messages (for example, an indexing worker and an analytics worker both reading every uploaded document). SQS and RabbitMQ shine when each message should be processed by exactly one worker (a classic job queue) - though SQS standard still delivers at-least-once, so that one worker must tolerate the occasional duplicate. We pick based on the consumption pattern, not the AI part.
+
+A few things bite harder with slow AI workers:
+
+- **Visibility timeout.** SQS hides a picked-up message for only 30 seconds by default, but an LLM, transcription, or agent job runs for minutes. If the timeout expires mid-job, the message reappears and a second worker reruns it - double cost. Set the timeout to the max job time, or heartbeat it with `ChangeMessageVisibility` (the ceiling is 12 hours per message).
+- **At-least-once, so dedupe.** Because delivery is at-least-once, a job can run twice. Make workers idempotent (dedupe on `job_id`, upsert by document id) so a rerun does not double-charge or create duplicate vector-DB rows.
+- **Dead-letter queues.** A document that always crashes the parser will retry forever and block the queue. Route messages that fail N times (`maxReceiveCount`) to a dead-letter queue for inspection.
+- **Backpressure.** Use queue depth as the signal to cap in-flight jobs and autoscale workers, so we do not overrun the GPU pool or the provider's token and request limits.
 
 ## Rate Limiting in AI
 
