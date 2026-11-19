@@ -126,6 +126,9 @@
   - [Requests Per Minute (RPM)](#requests-per-minute-rpm)
   - [Concurrent Requests](#concurrent-requests)
   - [Cost-Based Rate Limiting](#cost-based-rate-limiting)
+  - [The Algorithms](#the-algorithms)
+  - [Handling 429s on the Client Side](#handling-429s-on-the-client-side)
+  - [Fairness Across Tenants](#fairness-across-tenants)
 - [AI Gateway](#ai-gateway)
 - [Embeddings Pipeline](#embeddings-pipeline)
   - [Choosing an Embedding Model](#choosing-an-embedding-model)
@@ -1716,25 +1719,42 @@ In regular APIs, we rate-limit by requests per second. Like 100 requests per min
 
 In AI, this is not enough. Two requests can be very different in cost. One request can be 100 tokens, another can be 100,000 tokens.
 
-So in AI, we rate-limit on multiple dimensions.
+So in AI, we rate-limit on multiple dimensions. And note that the upstream providers already enforce their own RPM and token-per-minute limits, so our gateway's limits sit on top of theirs and must respect them.
 
 ### Tokens Per Minute (TPM)
 
-We track how many tokens a user has used in the last minute and block them after a limit.
+We track how many tokens a user has used in the last minute and block them after a limit. The subtle part is *when* tokens are counted. Because we do not know the output length before generating, TPM is partly a **pre-flight reservation**: the request reserves tokens up front (based on `max_tokens` or an estimate), then reconciles against the actual usage once the response is done. Providers differ here - OpenAI reserves `max(max_tokens, estimate)` before the call (so a huge `max_tokens` throttles your own throughput), while Anthropic meters output tokens in real time and does not count `max_tokens` against the output limit.
 
 ### Requests Per Minute (RPM)
 
-Same as before, but in addition to TPM.
+A cap on requests per minute, enforced alongside TPM. RPM protects against many small, cheap calls (which barely move TPM); TPM protects against a few huge calls. A request is blocked if it would breach **either** limit, whichever is hit first.
 
 ### Concurrent Requests
 
-How many requests is a user running at the same time? This matters because LLM requests are long-running.
+How many requests is a user running at the same time? This matters because LLM requests are long-running, and a streaming call holds its slot for the entire stream.
 
 ### Cost-Based Rate Limiting
 
-In some apps, we directly track the dollar cost a user is consuming and apply a cost cap.
+In some apps, we directly track the dollar cost a user is consuming and apply a cost cap. Providers offer this natively too as monthly spend limits (hitting the cap returns a 429, sometimes with no `Retry-After`).
 
-Tools like Kong, Tyk, and Portkey provide multi-dimensional rate limiting for AI workloads.
+### The Algorithms
+
+- **Token bucket:** a bucket refills at a fixed rate and requests draw from it; it allows short bursts up to the bucket size. Both major providers behave bucket-like, so this is the natural fit for TPM and RPM.
+- **Sliding window:** counts events over a rolling trailing window; smoother than a fixed window and avoids the double-burst at window boundaries. Good for RPM fairness.
+- **Leaky bucket:** drains at a constant rate, smoothing bursts into a steady stream; fits concurrency and egress shaping toward a provider.
+
+### Handling 429s on the Client Side
+
+When a limit is exceeded, providers return **HTTP 429**. Clients should handle it well:
+
+- Respect the **`Retry-After`** header when present; otherwise back off exponentially **with jitter** (random spread) so retries do not all fire at once.
+- Read the remaining-quota headers to throttle *before* hitting 429: OpenAI exposes `x-ratelimit-remaining-requests` / `-tokens` (and `-reset-*`), and Anthropic exposes `anthropic-ratelimit-requests-remaining` / `-tokens-remaining` (with input/output split).
+
+### Fairness Across Tenants
+
+Limits usually nest in three tiers: **global (org)** contains **per-tenant** contains **per-user/key**. Capping a tenant below the org limit (for example, Anthropic workspaces) stops one tenant from starving the others, while unused capacity stays shared. Priority tiers let important traffic through first under pressure.
+
+Tools like Kong AI Gateway (AI Rate Limiting Advanced), Portkey, and LiteLLM provide multi-dimensional rate limiting for AI workloads.
 
 Here, we have rate-limited on tokens, requests, concurrency, and cost together. This is critical because a buggy client can otherwise burn through our entire budget in minutes. Now, our AI system can stay safe under sudden load and abusive traffic.
 
