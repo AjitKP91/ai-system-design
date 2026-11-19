@@ -196,6 +196,7 @@
   - [5. Self-host smaller models](#5-self-host-smaller-models)
   - [6. Batch inference](#6-batch-inference)
   - [7. Better retrieval (for RAG)](#7-better-retrieval-for-rag)
+  - [8. Cap reasoning tokens (for reasoning models)](#8-cap-reasoning-tokens-for-reasoning-models)
 - [Multi-Tenancy](#multi-tenancy)
 - [Fine-Tuning Infrastructure](#fine-tuning-infrastructure)
   - [Training Cluster](#training-cluster)
@@ -3123,7 +3124,7 @@ Route easy queries to a cheaper model (like Haiku) and only use the expensive mo
 
 ### 2. Use prompt caching
 
-For long system prompts, prompt caching cuts input cost by up to 90%.
+For long system prompts, prompt caching cuts input cost by up to 90% on cache hits. Put the stable parts (system prompt, tools, long documents) first and the changing user message last, or nothing caches.
 
 ### 3. Use semantic cache
 
@@ -3131,7 +3132,7 @@ For repeated questions, semantic cache returns the saved answer without calling 
 
 ### 4. Shorter outputs
 
-Train users (with prompt instructions like "answer in 2 sentences") or hard limits (`max_tokens`) to keep outputs short. Output tokens are usually 4x to 5x more expensive than input tokens.
+Train users (with prompt instructions like "answer in 2 sentences") or hard limits (`max_tokens`) to keep outputs short. Output tokens are usually 4x to 8x more expensive than input tokens (commonly around 5x).
 
 ### 5. Self-host smaller models
 
@@ -3144,6 +3145,10 @@ For non-urgent jobs (like overnight batch processing), use batch APIs (OpenAI ba
 ### 7. Better retrieval (for RAG)
 
 A good RAG retrieves only the relevant chunks, so the LLM has less to read. Bad RAG dumps too much context, which is slow and expensive.
+
+### 8. Cap reasoning tokens (for reasoning models)
+
+On reasoning models (o-series, extended-thinking), the hidden "thinking" tokens are billed and can dominate cost - often 10x the visible output. Use the lowest reasoning effort or thinking budget that still passes evals, and reserve high-reasoning calls for genuinely hard queries.
 
 I personally believe that cost optimization is a habit, not a one-time task. Watch the cost dashboard the same way we watch latency, and apply these levers based on our use case.
 
