@@ -1039,7 +1039,7 @@ The high-level picture looks like below:
         +----------+ +----------+ +----------+
 ```
 
-A model router is just a regular function, a classifier, or a tiny model that runs before the actual LLM call. It can save 50% to 70% of cost without hurting quality much.
+A model router is just a regular function, a classifier, or a tiny model that runs before the actual LLM call. It can cut cost substantially on mixed traffic - the [RouteLLM](https://github.com/lm-sys/RouteLLM) project, for example, reports up to ~85% savings on MT-Bench while keeping 95% of GPT-4 quality - but the savings depend heavily on the traffic mix and the quality bar we accept (on harder benchmarks like MMLU the reduction was closer to 30%).
 
 **Note:** The router itself must be very fast. A good rule of thumb is to keep the router's own latency under 10 percent of the chosen LLM's latency. If the chosen LLM takes 1 second, the router should add at most 100 ms.
 
@@ -1047,9 +1047,9 @@ There are five common routing strategies:
 
 - **Rule-based Routing:** Look at keywords, length, or patterns in the query and pick an LLM. Very fast and cheap, but brittle.
 - **Classifier-based Routing:** Train a small classifier on past `(query, best-LLM)` pairs. It learns from real data but needs labeled data and retraining.
-- **Embedding-based Routing:** Convert the query into an embedding and find the closest reference embedding, one per LLM. No training needed.
+- **Embedding-based Routing:** Convert the query into an embedding and find the closest reference embedding, one per LLM. No model training needed, but we do need reference examples per LLM.
 - **LLM-as-Router:** Use a small, cheap LLM whose only job is to read the query and pick the target LLM. Very flexible, but adds one extra LLM call.
-- **Cascade Routing:** Send the query to the cheapest LLM first. If the answer looks low-confidence, escalate to a bigger LLM.
+- **Cascade Routing:** Send the query to the cheapest LLM first. If the answer looks low-confidence, escalate to a bigger LLM. (Cascade is really an *orthogonal, sequential* strategy - introduced by [FrugalGPT](https://arxiv.org/abs/2305.05176) - that can be combined with any of the four above, not a sibling of them.)
 
 Cascade routing is the most cost-saving strategy, so let's see it in code:
 
@@ -1085,9 +1085,18 @@ Common mistakes to avoid:
 - **Routing on the wrong signal.** "Prove the Riemann hypothesis" is short but hard. "Please summarize this email for me, thanks" is long but easy. Route on intent and difficulty, not just length.
 - **No observability.** Log which LLM handled which query, the cost, the latency, and the quality. Without these logs, we cannot tune the router.
 
+Routing is not only a cost-vs-quality dial. Production routers (which is what tools like OpenRouter and LiteLLM actually do) also route on:
+
+- **Capability / feature routing:** send the query to a model that supports what it needs - vision, long context, tool/function calling, or JSON/structured output. This is a correctness constraint, not an optimization.
+- **Reliability / provider fallback:** on an error, 429, or timeout, retry on the next provider, and stop sending traffic to a provider that is failing until it recovers.
+- **Latency routing:** pick the fastest provider or deployment.
+- **Load / price routing:** balance across providers by effective price, least-busy, or rate-limit headroom.
+
+**How do we know routing did not hurt quality?** Measure it: run offline evals on a labeled set and/or online A/B tests, and track the cost-vs-quality curve. RouteLLM frames this as PGR (performance gap recovered) - how much of the gap between the weak and strong model the router recovers.
+
 **Note:** LLM Routing is not the same as Mixture of Experts. LLM Routing picks one full LLM for a full query, outside the model. Mixture of Experts picks a few expert sub-networks for each token, inside one model. We will see Mixture of Experts later.
 
-Tools like OpenRouter provide model routing as a service.
+Tools differ in what they route on: OpenRouter and [LiteLLM](https://docs.litellm.ai/docs/routing) route across providers for price, latency, and reliability, while [RouteLLM](https://github.com/lm-sys/RouteLLM) and commercial services like NotDiamond and Martian route by query difficulty for the cost-vs-quality tradeoff. Conflating the two is a common mistake.
 
 ## Vector Database
 
