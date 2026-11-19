@@ -3155,15 +3155,17 @@ Most AI products serve multiple customers. Each customer has its own data, promp
 
 In a multi-tenant AI system, we need:
 
-- **Per-tenant rate limits:** Customer A cannot eat all the tokens.
+- **Per-tenant rate limits:** Customer A cannot eat all the tokens, and fair-share scheduling stops one tenant's burst of large requests from starving others' latency on the shared GPU.
 - **Per-tenant quotas:** Customer A pays for X tokens per month.
 - **Per-tenant cost tracking:** We know how much we are spending serving each customer.
 - **Per-tenant data isolation:** Customer A's RAG documents are never returned to Customer B.
 - **Per-tenant prompt customization:** Customer A can have custom system prompts that customize the behavior.
 
-Multi-tenancy is hard in AI because everything is shared: the GPU, the inference server, the cache. We have to be careful that one customer's data does not leak into another customer's response, especially through caches.
+Multi-tenancy is hard in AI because everything is shared by default in a pooled deployment: the GPU, the inference server, the cache. We have to be careful that one customer's data does not leak into another customer's response, especially through caches. The subtlest leaks are through caches: KV/prefix caches, prompt caches, and semantic caches all key on content, so the cache key must include the tenant ID - otherwise one tenant can get a cache hit built from another tenant's data.
 
-Here, the AI Gateway makes our life easy. Once every LLM call flows through the gateway, per-tenant limits, quotas, and isolation become a single configuration instead of code scattered across the system.
+There are two isolation models. A **shared (pooled)** deployment routes all tenants to the same model replicas - cheapest and best utilization, but isolation is enforced only in software. A **dedicated** deployment gives a tenant its own replicas or GPUs - more expensive, lower utilization, but the hard isolation that compliance-sensitive tenants often require.
+
+Here, the AI Gateway makes our life easier. Once every LLM call flows through the gateway, per-tenant limits, quotas, and cost tracking become a single configuration instead of code scattered across the system. Isolation inside caches still has to be enforced at the serving layer with tenant-scoped cache keys.
 
 ## Fine-Tuning Infrastructure
 
