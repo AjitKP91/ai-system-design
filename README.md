@@ -3223,13 +3223,13 @@ When we want a faster first word, we look at the prefill side. When we want fast
 
 ### Quantization
 
-Models store their weights as 16-bit or 32-bit floating point numbers. [**Model Quantization**](https://outcomeschool.com/blog/how-does-model-quantization-work) compresses these to 8-bit or even 4-bit. The model becomes smaller and faster, with a small drop in quality.
+Models store their weights as 16-bit or 32-bit floating point numbers. [**Model Quantization**](https://outcomeschool.com/blog/how-does-model-quantization-work) compresses these to 8-bit or even 4-bit. The model becomes smaller and faster, with a small drop in quality. How much quality drops depends on the method and the model: 8-bit and good 4-bit weight-only schemes (AWQ, GPTQ) are often near-lossless, but pushing to 2 or 3 bits, or quantizing activations, can hurt noticeably, and sensitivity varies from model to model.
 
-Example: Llama 70B in 16-bit takes 140 GB. In 4-bit it takes only 35 GB. It now fits in a single A100 instead of needing 2.
+Example: Llama 70B in 16-bit takes 140 GB. In 4-bit it takes only 35 GB (weights alone), so it fits on a single 80 GB A100 instead of two - though we still need headroom for the KV cache and activations, so a 40 GB A100 would not be enough.
 
 Quantization also speeds up decode directly. Remember, decode is memory-bandwidth-bound. Smaller weights mean less data to move from memory for every token.
 
-Common quantization formats: INT8, FP8, AWQ, GPTQ, [GGUF](https://outcomeschool.com/blog/how-does-gguf-work).
+Quantization comes in a few flavors: **weight-only** (shrink just the weights - AWQ and GPTQ, usually 4-bit), **weight + activation** (both, e.g. INT8 or FP8 "W8A8"), and **KV-cache quantization** (compress the cache to fit longer context and bigger batches). These are not all the same kind of thing: INT8 and FP8 are numeric precisions, AWQ and GPTQ are 4-bit weight-only methods, and [GGUF](https://outcomeschool.com/blog/how-does-gguf-work) is a file format (used by llama.cpp), not a quantization method.
 
 ### Continuous Batching
 
@@ -3292,7 +3292,7 @@ Step 3: Keep the accepted prefix + the correction
 
 Here, we can see that 3 tokens were generated using only 1 expensive big-model pass instead of 3. The longer the draft is correct, the bigger the saving.
 
-This makes generation 2x to 3x faster on the same GPU. And with the right acceptance rule (rejection sampling), the output quality stays exactly the same as the big model alone.
+This makes generation 2x to 3x faster on the same GPU. And with the right acceptance rule (speculative/modified rejection sampling), the output comes from **exactly the same probability distribution** as the big model alone - provably identical, not just similar.
 
 There are several ways to make the guesses:
 
@@ -3312,7 +3312,7 @@ Now, let's discuss one of the biggest changes in how we make models smarter. Unt
 There are three common patterns:
 
 - **Sequential scaling:** The model thinks step by step, longer and longer, before answering. This is what reasoning models do internally.
-- **Parallel scaling:** Run the model multiple times in parallel and pick the best (or vote across them). Good when we can verify the answer (code that passes tests, a math proof).
+- **Parallel scaling:** Run the model multiple times in parallel and pick the best (or vote across them) - known as **best-of-N** and **self-consistency**. A **verifier (reward) model** can score the candidates and pick the winner. Good when we can verify the answer (code that passes tests, a math proof). [Snell et al. (2024)](https://arxiv.org/abs/2408.03314) show compute-optimal test-time scaling can beat a 14x larger model.
 - **Hybrid scaling:** Combine both. Generate many parallel chains of thought, then pick the most consistent.
 
 The three patterns look like below:
@@ -3360,7 +3360,7 @@ Put simply, **Flash Attention is the same attention, computed in a much smarter 
 To understand why this matters, we must first understand GPU memory. A GPU has two types of memory:
 
 - **HBM (High Bandwidth Memory):** Large but slower. It can hold tens of gigabytes, but reading from it is slow compared to compute speed.
-- **SRAM (Static RAM):** Small but very fast on-chip memory. Reading from SRAM is roughly 10 to 20 times faster than reading from HBM, but it can only hold a few hundred kilobytes.
+- **SRAM (Static RAM):** Small but very fast on-chip memory. Reading from SRAM is roughly 10 times faster than reading from HBM, but it can only hold a few hundred kilobytes.
 
 Think of HBM as a huge library on another floor, and SRAM as a small desk right in front of us. Walking to the library takes time. Reading on the desk is instant.
 
@@ -3368,7 +3368,7 @@ Standard attention creates a giant N×N attention score matrix in HBM, where N i
 
 Flash Attention says: **why store the giant N×N matrix in HBM at all? Let's compute attention in small blocks (tiling) that fit inside SRAM, and never write the full matrix to HBM.** It uses a clever trick called **online softmax** that computes softmax block by block by tracking a running max and a running sum, with the same final result as standard softmax.
 
-Let's put this into perspective with real numbers for 4,000 tokens:
+Let's put this into perspective with illustrative numbers for 4,000 tokens (assuming a model dimension around 1,000):
 
 - **Standard attention:** ~64 million entries moved between HBM and SRAM
 - **Flash Attention:** ~17 million entries moved
@@ -3419,17 +3419,19 @@ This means a model can have a huge total parameter count but only use a fraction
 
 For AI System Design, MoE matters because it changes our cost and capacity numbers. We have to plan GPU memory for the **total parameters** (all experts must be loaded into memory), but our compute budget is set by **active parameters** (only the picked experts run per token). So we get the smartness of a very large model while paying the per-token compute of a much smaller one.
 
+Two practical caveats: the router must be **load-balanced** (via an auxiliary loss or a balancing strategy) or a few experts get overloaded while others go unused; and because every expert must stay resident in memory, large MoEs are sharded across GPUs with **expert parallelism**, which adds all-to-all communication between devices.
+
 ### Model Distillation
 
 Now, let's look at a different way to speed things up. So far, we have talked about making the same model run faster. There is another option: replace the big model with a smaller one that has been trained to copy the big one's behavior.
 
 This is called [**knowledge distillation**](https://outcomeschool.com/blog/how-does-knowledge-distillation-work) (or just distillation).
 
-In short, **distillation trains a small "student" model to imitate a big "teacher" model.**
+In short, **distillation trains a small "student" model to imitate a big "teacher" model.** The idea goes back to [Hinton, Vinyals, and Dean (2015)](https://arxiv.org/abs/1503.02531), who trained students on the teacher's soft probabilities. In practice there are two flavors: **soft-label distillation** (match the teacher's output distribution) and **response/data distillation** (fine-tune the student on text the teacher generated).
 
 The flow is straightforward. First, we pick a big, expensive teacher model (like GPT-5.5 or Claude Opus 4.8). Then, we feed it lots of prompts and capture both the answers and the soft probabilities. After that, we train a small student model to produce the same outputs on the same inputs. Finally, we deploy the student in production.
 
-The student is much smaller (often 10x to 100x smaller), much cheaper, and much faster. For narrow tasks, the student can match or get very close to the teacher's quality. DeepSeek-R1's distilled variants are a famous recent example - they approached GPT-4-class reasoning on many benchmarks in models small enough to run on a laptop.
+The student is much smaller (often 10x to 100x smaller), much cheaper, and much faster. For narrow tasks, the student can match or get very close to the teacher's quality. DeepSeek-R1's distilled variants are a famous recent example - R1's reasoning was distilled (via response distillation on its reasoning traces) into small Qwen and Llama models (1.5B to 70B), and the 32B variant outperformed OpenAI o1-mini on several reasoning benchmarks like AIME 2024, in models small enough to run on a laptop.
 
 Distillation is different from quantization. Quantization keeps the same model and shrinks the precision of its weights. Distillation creates a brand-new, smaller model.
 
@@ -3451,6 +3453,8 @@ In standard [Multi-Head Attention](https://outcomeschool.com/blog/multi-head-att
 Simply put, **Grouped Query Attention gives near Multi-Head Attention quality with a much smaller KV Cache by having groups of heads share Keys and Values.**
 
 This matters in production because a smaller KV Cache means the same GPU can serve many more concurrent users with long contexts.
+
+GQA sits between two extremes: **Multi-Query Attention (MQA)** shares a single Key and Value across all heads (smallest KV Cache, some quality loss), while standard MHA gives every head its own. GQA picks a middle number of KV groups to get most of MQA's savings with near-MHA quality. DeepSeek's **MLA (Multi-head Latent Attention)** takes a different route, compressing the Keys and Values into a small latent vector per token.
 
 Together, these techniques are why modern inference servers can serve 1 million-token contexts with reasonable cost and latency.
 
