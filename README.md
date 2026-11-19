@@ -1758,21 +1758,22 @@ A typical AI Gateway sits like this:
 
 What does the AI Gateway give us?
 
-- **Single endpoint, many models:** Our app calls one URL with a standard schema. The gateway figures out which provider and model to send it to. Switching from GPT-5.5 to Claude Opus 4.8 is a config change, not a code change.
+- **Single endpoint, many models:** Our app calls one URL with a standard schema (usually the **OpenAI-compatible** `/v1/chat/completions` schema, the de-facto industry interface). The gateway figures out which provider and model to send it to. Switching from GPT-5.5 to Claude Opus 4.8 is a config change, not a code change.
 - **Multi-provider failover:** If OpenAI is down, the gateway falls back to Anthropic without our app even knowing.
+- **Virtual keys and per-team budgets:** The gateway issues scoped "virtual keys" per team or app, each with its own TPM/RPM limits and a hard spend budget. We can rotate or revoke one key without touching the others, and cap spend per team.
 - **Centralized cost tracking:** Every call is tagged with user, team, feature, and request ID. Cost dashboards become trivial.
 - **Centralized rate limiting and quotas:** All the multi-dimensional rate limits (TPM, RPM, concurrent, cost-based) live here, not in every microservice.
 - **Centralized caching:** Prompt cache and semantic cache run inside the gateway.
-- **Centralized guardrails:** Input and output guardrails run as gateway policies. One place to enforce safety across the whole company.
+- **Centralized guardrails:** Input and output guardrails run as gateway policies, including **PII redaction before prompts leave for third-party providers**. One place to enforce safety across the whole company.
 - **Audit logs:** Every prompt and response is logged for debugging and compliance.
 - **Observability:** Latency, token usage, errors, cache hit rates - all in one dashboard.
 
-Tools used: Portkey, LiteLLM, Kong AI Gateway, Envoy AI Gateway, TrueFoundry, AWS Bedrock (acts as a gateway too).
+Tools used: cross-provider gateways like Portkey, LiteLLM, Kong AI Gateway, Envoy AI Gateway, and TrueFoundry. AWS Bedrock is gateway-*like* but only across the models it hosts - it is a managed single-provider inference service, not a vendor-neutral proxy, so it cannot fail over to OpenAI or a self-hosted vLLM.
 
 A few things we must get right when designing an AI Gateway:
 
 - **Pass-through streaming:** Streaming has to flow through without buffering. A naive gateway that buffers the full response before sending kills the SSE experience. Token counts are logged from the final SSE event.
-- **Low gateway latency:** The gateway adds overhead on every call. We want this overhead under 10 ms.
+- **Low gateway latency:** The gateway adds overhead on every call, so keep it small relative to the model's latency (which is in seconds). A self-hosted, compiled proxy (Kong, Envoy) can add low single-digit milliseconds; a hosted gateway adds a network hop, so it is tens of milliseconds. Either is usually fine next to a multi-second LLM call - the thing to avoid is buffering the stream.
 - **Circuit breakers:** If the gateway itself is unhealthy, the app should fall back to a direct call to the model provider.
 - **Multi-region deployment:** For low latency and reliability, we deploy the gateway in multiple regions and route users to the nearest one.
 
