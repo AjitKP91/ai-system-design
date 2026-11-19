@@ -3759,9 +3759,9 @@ Here, we can see the building blocks from this guide:
 
 ### Case Study 2: How Cursor Works
 
-[Cursor](https://outcomeschool.com/blog/how-does-cursor-work) is a code editor with an AI brain on top. It is a great example of RAG and model routing working together.
+[Cursor](https://outcomeschool.com/blog/how-does-cursor-work) is a code editor with an AI brain on top. It is a great example of code retrieval and model routing working together.
 
-- **RAG over our codebase:** Cursor breaks our code into chunks (like one function each), turns each chunk into an embedding, and stores them in a vector database. When we ask "Where do we check the user's password?", it searches by meaning and sends the matching code to the LLM.
+- **Code retrieval:** To answer "Where do we check the user's password?", Cursor searches our codebase and sends the matching code to the LLM. Earlier versions did this with classic codebase RAG - chunk the code (roughly one function each), embed each chunk, store the embeddings in a vector database, and search by meaning. As of Cursor 2.1 (late 2025), its docs state it no longer stores embeddings of our code for search; it uses "Instant Grep", a fast local search engine (regex and word-boundary matching). Either way, the building block is the same: find the relevant code, then feed it to the model.
 - **Model routing by job:** It uses different models for different jobs.
 
 | Job                 | Model used                | Why                                                             |
