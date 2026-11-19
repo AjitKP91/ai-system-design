@@ -116,6 +116,8 @@
   - [Sliding Window](#sliding-window)
   - [Compaction](#compaction)
   - [Hierarchical Memory](#hierarchical-memory)
+  - [Offloading (Write)](#offloading-write)
+  - [Isolation (Sub-Agents)](#isolation-sub-agents)
 - [Streaming Responses](#streaming-responses)
   - [Server-Sent Events (SSE)](#server-sent-events-sse)
   - [WebSockets](#websockets)
@@ -1541,11 +1543,11 @@ But there is a deeper problem. The maximum context window is the size we are _al
 
 As we fill the context with more tokens, three things happen, and they all hurt quality.
 
-**1. Context Rot.** As the number of tokens in the context grows, the model's ability to recall information from anywhere in that context drops. Long-context evaluations (such as **Needle-in-a-Haystack** style tests and the more recent RULER and LongBench benchmarks) show that even models that advertise very long context windows start losing accuracy well before they hit that limit. So a large advertised context does not mean an equally large effective context.
+**1. Context Rot.** As the number of tokens in the context grows, the model's ability to recall information from anywhere in that context drops. This phenomenon was named and measured in [Chroma's "Context Rot" report (2025)](https://research.trychroma.com/context-rot). Independent long-context evaluations corroborate it: **Needle-in-a-Haystack** tests and benchmarks like [RULER](https://arxiv.org/abs/2404.06654) (which found only about half of models claiming 32k+ context actually hold performance at 32k) and LongBench show that even models advertising very long context windows start losing accuracy well before they hit that limit. So a large advertised context does not mean an equally large effective context.
 
-**2. [Lost in the Middle](https://outcomeschool.com/blog/lost-in-the-middle-problem-in-llms).** Research by Liu et al. (2023) showed that models pay the most attention to the start and the end of the context, and the least attention to the middle. If we plot accuracy against the position of the fact, we get a U-shaped curve. So a critical fact placed in the middle of a long context is more likely to be ignored than the same fact placed at the top or bottom. This silently breaks RAG systems that dump 50 chunks into the prompt. The fix is to send less but send the right thing (use a reranker and keep the top few chunks), and to place the most relevant chunks at the start and the end.
+**2. [Lost in the Middle](https://outcomeschool.com/blog/lost-in-the-middle-problem-in-llms).** Research by [Liu et al. (2023, TACL)](https://arxiv.org/abs/2307.03172) showed that models pay the most attention to the start and the end of the context, and the least attention to the middle. If we plot accuracy against the position of the fact, we get a U-shaped curve. So a critical fact placed in the middle of a long context is more likely to be ignored than the same fact placed at the top or bottom. This silently breaks RAG systems that dump 50 chunks into the prompt. The fix is to send less but send the right thing (use a reranker and keep the top few chunks), and to place the most relevant chunks at the start and the end.
 
-**3. RoPE Positional Decay.** Modern LLMs use [**Rotary Position Embedding (RoPE)**](https://outcomeschool.com/blog/math-behind-rope-rotary-position-embedding) to encode the position of each token. RoPE makes the attention score between two tokens depend only on the relative distance between them, and as two tokens get farther apart, their attention tends to decay. Newer models have softened this, but no production model has eliminated it.
+**3. RoPE Positional Decay.** Modern LLMs use [**Rotary Position Embedding (RoPE)**](https://outcomeschool.com/blog/math-behind-rope-rotary-position-embedding) ([Su et al., 2021](https://arxiv.org/abs/2104.09864)) to encode the position of each token. RoPE rotates each token's representation so that the *positional* part of the attention score depends on the relative distance between two tokens (the score still depends on the tokens' content too), and the paper shows this positional contribution tends to decay as tokens get farther apart. Newer models rescale RoPE's frequencies (with tricks like positional interpolation and YaRN) to push this out, but no production model has eliminated it.
 
 The practical implication: where we place information in the prompt matters as much as the information itself. Important context should go at the top of the system prompt or right next to the question, not buried in the middle.
 
@@ -1565,7 +1567,12 @@ It is the next layer above [prompt engineering](https://outcomeschool.com/blog/p
 
 A useful way to think about this: the context window is a small workspace, and we are the one deciding what goes on it. We choose what to put in, what to leave out, what to put at the top, and what to push to the bottom. The model only sees what we place there.
 
-We need a strategy to manage the context window.
+We need a strategy to manage the context window. A useful way to organize these strategies is the **Write / Select / Compress / Isolate** framing (popularized by Anthropic and LangChain):
+
+- **Compress** - shrink what is already there (Truncation, Summarization, Compaction below).
+- **Select** - pull in only the relevant pieces on demand (Hierarchical Memory / RAG below).
+- **Write** - push state out to an external scratchpad or file and read it back later (Offloading below).
+- **Isolate** - give a sub-task its own clean context window (sub-agents, below).
 
 ### Truncation
 
@@ -1581,13 +1588,21 @@ Keep only the last N messages and the system prompt. Forget everything in betwee
 
 ### Compaction
 
-[**Context compaction**](https://outcomeschool.com/blog/how-does-context-compaction-work) is the technique of shrinking the old conversation into a short summary, so the important facts stay while the context window gets free space again. For agent loops, we also compact tool results that are no longer needed. Keep the question, the decisions, and the important findings. Drop the verbose tool outputs. Good compaction never summarizes away the system instructions, the user's main goal, or the very latest messages. Only the messy middle gets compressed. For example, an hour of a coding agent's work can become a short note like "Goal: fix the login bug. Already changed `auth.py` and `login.py`. Tests are passing." This is how an agent works on a long task for hours without losing the plot.
+[**Context compaction**](https://outcomeschool.com/blog/how-does-context-compaction-work) is the technique of shrinking the old conversation into a short summary, so the important facts stay while the context window gets free space again. Compaction is really summarization specialized for agent loops: besides condensing chat turns, it also discards tool results that are no longer needed. Keep the question, the decisions, and the important findings. Drop the verbose tool outputs. Good compaction never summarizes away the system instructions, the user's main goal, or the very latest messages. Only the messy middle gets compressed. For example, an hour of a coding agent's work can become a short note like "Goal: fix the login bug. Already changed `auth.py` and `login.py`. Tests are passing." This is how an agent works on a long task for hours without losing the plot. One cost to keep in mind: rewriting or summarizing early context invalidates the prompt/KV cache for everything after it, so it is better to append rather than rewrite, and to compact in batches rather than every single turn.
 
 ### Hierarchical Memory
 
 Store the full history in a vector DB and only retrieve relevant parts when needed.
 
-Choosing the right strategy depends on the use case. For chat, summarization works well. For agents, compaction works well. For Q&A, hierarchical memory works well.
+### Offloading (Write)
+
+Instead of keeping everything in the context, write state out to an external scratchpad or file (for example a `NOTES.md` the agent maintains) and read it back only when needed. The context window stays small while the full record lives outside it. This is the "Write" strategy, and it is how long-running agents remember goals and progress across many steps.
+
+### Isolation (Sub-Agents)
+
+Give a sub-task its own clean context window by handing it to a sub-agent. The sub-agent does its work in isolation and returns only a short result, so the main agent's context never fills up with the sub-task's intermediate steps. We cover this in detail in [Multi-Agent Systems](#multi-agent-systems).
+
+Choosing the right strategy depends on the use case. For chat, summarization works well. For agents, compaction works well. For Q&A, hierarchical memory works well. For long agent runs, we usually combine several: compress the history, offload state to a file, and isolate sub-tasks in sub-agents.
 
 To learn how to build an **AI Coding Agent from scratch** and implement different layers of compaction in it, check out the [AI and Machine Learning Program](https://outcomeschool.com/program/ai-and-machine-learning) by Outcome School.
 
