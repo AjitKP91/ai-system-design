@@ -355,6 +355,7 @@ In AI System Design, we deal with all of these, and on top of that, we deal with
 - **Long requests:** A single LLM call can take 30 seconds or even minutes. Regular APIs return in milliseconds.
 - **Streaming:** LLM responses are [streamed token by token](https://outcomeschool.com/blog/how-does-token-streaming-work). Not a single big response.
 - **Non-deterministic output:** The same input can give different outputs. We cannot just unit-test like regular code.
+- **Finite context window:** Each call only "remembers" what fits in a bounded context window. Regular APIs are stateless by design, but with LLMs we have to actively manage what goes into that window. See [Context Window Management](#context-window-management).
 - **Cost per request:** Every API call costs real money. A bug in a loop can burn thousands of dollars overnight.
 
 So all the regular system design concepts (load balancers, caches, queues, databases) still apply. But we have to use them differently because the workload is different.
