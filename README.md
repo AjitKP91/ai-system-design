@@ -395,6 +395,23 @@ An AI system is just a regular system with one new component in the middle: the 
 
 In short, **an AI system is a regular system with an LLM added in the middle, plus smarter caching, streaming, cost tracking, safety, and evals built around it.**
 
+Here is the big picture in one diagram. Each box is a section in this guide.
+
+```mermaid
+flowchart LR
+    U[User] --> GW[AI Gateway<br/>auth, rate limit, routing]
+    GW --> GI[Input Guardrails]
+    GI --> C{Cache hit?}
+    C -- yes --> R[Stream response]
+    C -- no --> INF[Inference Server<br/>LLM on GPU]
+    RAG[(Vector DB / RAG)] --> INF
+    TOOLS[Tools / MCP / Agents] --> INF
+    INF --> GO[Output Guardrails]
+    GO --> R
+    R --> U
+    OBS[[Observability, Evals, Cost Tracking]] -.watches.-> GW & INF & GO
+```
+
 If we keep this in mind, every AI architecture decision becomes easy to reason about.
 
 ## Inference Server
