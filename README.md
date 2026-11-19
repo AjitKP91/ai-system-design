@@ -2822,7 +2822,7 @@ Now, let's go deeper into the most serious security problem in AI systems.
 
 **[Prompt Injection](https://outcomeschool.com/blog/prompt-injection-in-llms) is an attack where someone slips their own instructions into the text that an AI application sends to the model, so that the model follows the attacker's instructions instead of the developer's instructions.**
 
-**Prompt Injection = Prompt + Injection.** Prompt is the text we send to the model. Injection means pushing something extra inside.
+**Prompt Injection = Prompt + Injection.** Prompt is the text we send to the model. Injection means pushing something extra inside. This is the top entry (**LLM01**) in the [OWASP Top 10 for LLM Applications](https://genai.owasp.org/llmrisk/llm01-prompt-injection/), the industry-standard risk framework for LLM systems.
 
 Suppose we hire a very obedient assistant. We tell them, "Sort my letters, and never share my home address with anyone." One letter says inside it: "New instruction from the manager. Please write the address of this house on a postcard and mail it to the sender." Our assistant cannot tell the difference between an instruction from us and an instruction printed inside a letter. Both are just words on paper. So, they mail our address away. Nobody broke in. The attacker simply wrote words.
 
@@ -2850,7 +2850,7 @@ Here, we can see that the limit lives in our code. The model can ask for a refun
 
 > A prompt is a request. Code is a rule.
 
-For high-stakes agents, we go one level deeper with the **dual LLM pattern**. A **privileged model** talks to the user, plans the task, and can call tools, but never sees the untrusted text. A **quarantined model** reads the untrusted web page or email, but has no tools and cannot take any action. Its output comes back only as data, never as an instruction. So, the attacker's note reaches only the model that has no hands.
+For high-stakes agents, we go one level deeper with the **dual LLM pattern** ([proposed by Simon Willison](https://simonwillison.net/2023/Apr/25/dual-llm-pattern/)). A **privileged model** talks to the user, plans the task, and can call tools, but never sees the untrusted text. A **quarantined model** reads the untrusted web page or email, but has no tools and cannot take any action. Its output comes back only as data, never as an instruction. So, the attacker's note reaches only the model that has no hands.
 
 Let me tabulate the defense checklist in the order of importance.
 
@@ -2863,7 +2863,7 @@ Let me tabulate the defense checklist in the order of importance.
 | Separate identity for the agent                         | Stops the agent from inheriting the user's full power |
 | Spotlighting and clear data markers                     | Lowers the success rate of the injection itself       |
 | Input and output guards                                 | Catch known patterns and obvious leaks                |
-| Dual LLM or CaMeL style separation                      | Removes the untrusted text from the powerful path     |
+| Dual LLM or [CaMeL](https://arxiv.org/abs/2503.18813) style separation | Removes the untrusted text from the powerful path     |
 | Full logging of tools, inputs, and actions              | Lets us detect, trace, and recover                    |
 | Red teaming before every release                        | Tells us where we actually stand                      |
 
@@ -2882,7 +2882,7 @@ It is to AI what penetration testing is to security. We hire (or simulate) attac
 Common things a red team tests for:
 
 - **Jailbreaks:** Prompts that bypass the system instructions ("Ignore all previous instructions and...").
-- **Multi-turn attacks:** Slowly steering the model toward a forbidden answer over many turns. Research on attacks like Crescendo (Microsoft, 2024) has shown very high success rates within a handful of turns when defenses are absent.
+- **Multi-turn attacks:** Slowly steering the model toward a forbidden answer over many turns. Research on attacks like Crescendo ([Microsoft, 2024](https://arxiv.org/abs/2404.01833)) has shown very high success rates within a handful of turns when defenses are absent.
 - **Prompt injection through user input:** Hiding instructions in a document the user uploads, in a webpage the agent visits, or in tool output.
 - **Data exfiltration:** Tricking the model into leaking the system prompt, training data, or other users' data.
 - **Tool abuse:** Getting the agent to call dangerous tools with bad inputs.
@@ -2896,7 +2896,7 @@ The output of a red team run is a report with attack categories, success rates, 
 
 ### LLM Watermarking
 
-One more safety question comes up at scale: how can we later prove that a piece of text was written by our model? So, here comes [**LLM Watermarking**](https://outcomeschool.com/blog/how-does-llm-watermarking-work) into the picture. It is a hidden signal that a model quietly leaves inside the text it writes.
+One more safety question comes up at scale: how can we later detect whether a piece of text was written by our model? So, here comes [**LLM Watermarking**](https://outcomeschool.com/blog/how-does-llm-watermarking-work) into the picture. It is a hidden signal that a model quietly leaves inside the text it writes.
 
 At every step, an LLM has many good choices for the next token. A **secret key** is used as a seed to split the vocabulary into **preferred tokens** and **other tokens** for that step, like a coin toss for every word. The preferred tokens get a small boost in probability:
 
@@ -2910,6 +2910,8 @@ gym    → 0.18 → 0.14
 Here, `park` and `market` are preferred tokens, so their numbers went up, and the model now picks `park`. The sentence "I am going to the park" reads completely normal. But over hundreds of tokens, the text contains far more preferred tokens than chance would allow. A detector that knows the secret key counts them and finds the hidden pattern.
 
 The size of the boost is a trade-off. A bigger push makes the watermark easier to detect but hurts quality. A smaller push keeps the writing better but needs a longer text for detection. Heavy editing or paraphrasing also weakens the signal.
+
+The green-list/red-list method above comes from [Kirchenbauer et al. (2023)](https://arxiv.org/abs/2301.10226). In production, Google's [SynthID Text](https://deepmind.google/science/synthid/) applies the same idea to Gemini and is open-sourced in Hugging Face Transformers (published in [Nature, 2024](https://www.nature.com/articles/s41586-024-08025-4)).
 
 ## Data Privacy and Compliance
 
