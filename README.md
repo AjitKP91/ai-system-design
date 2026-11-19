@@ -936,11 +936,11 @@ Let me tabulate the four main approaches for your better understanding.
 So, based on our use case:
 
 - If we are running an existing model and want a quick memory saving, use **Quantization** of the cache.
-- If we have a very long conversation, or text that keeps coming in without an end, use **Token Eviction** with [Attention Sinks](https://outcomeschool.com/blog/how-do-attention-sinks-work).
+- If we have a very long conversation, or text that keeps coming in without an end, use **Token Eviction** with an attention-sink window (as in [StreamingLLM](https://outcomeschool.com/blog/how-do-attention-sinks-work)).
 - If we need exact recall of everything in a long document, do not use Token Eviction.
 - If we are training a new model, use **GQA** or **MLA** in the design from day one.
 
-**Note:** GQA ([Grouped Query Attention](https://outcomeschool.com/blog/grouped-query-attention)) and MQA (Multi-Query Attention) let many attention heads share the same Keys and Values, and MLA (Multi-head Latent Attention) stores a small compressed vector per token instead of the full Keys and Values. We will see GQA in detail in Inference Optimization.
+**Note:** GQA ([Grouped Query Attention](https://outcomeschool.com/blog/grouped-query-attention)) and MQA (Multi-Query Attention) let many attention heads share the same Keys and Values, and MLA (Multi-head Latent Attention) stores a small compressed vector per token instead of the full Keys and Values. We will see GQA in detail in Inference Optimization. (GQA is usually added by cheaply "uptraining" an existing model rather than training from scratch, so it is less expensive than a full retrain.)
 
 These approaches can be combined. A smaller KV Cache means more users per GPU, longer contexts, and faster decode, and that too without buying a bigger GPU.
 
@@ -958,11 +958,13 @@ What is actually stored is the KV Cache of that shared beginning, which is calle
 
 **Note:** Prompt caching only helps when requests share the exact same beginning. So, we must put the fixed parts (system prompt, tool definitions, long documents) at the start of the prompt, and the changing parts (the user message) at the end.
 
-Both OpenAI and Anthropic support prompt caching. It can cut input cost by up to 90% and reduce TTFT massively. It makes our life easy.
+OpenAI, Anthropic, and Google all support prompt caching, but with different mechanics. OpenAI and Gemini can cache automatically (implicit); Anthropic requires explicit `cache_control` breakpoints in the request. Cache hits cut input cost dramatically - as low as about 10% of the normal input price (up to ~90% off) - and reduce TTFT massively. Two trade-offs are worth knowing: Anthropic charges a premium to **write** the cache (about 1.25x base input for a 5-minute window, 2x for 1 hour), and Gemini's explicit caching adds a per-hour storage fee, so the savings only pay off when the same prefix is reused many times within the cache's lifetime. Prefixes also have a minimum length (around 1,024 tokens) before caching activates, and the cache expires after a few minutes of inactivity.
 
 ### Semantic Cache
 
 This is unique to AI.
+
+The simplest cache is an **exact-match cache**: hash the normalized request, and if the exact same request comes again, return the stored full response. It is cheap and has zero risk of a semantic mistake, but it only fires on identical text. Semantic caching relaxes this to "similar enough."
 
 Suppose two users ask:
 
@@ -985,6 +987,13 @@ A value around `0.85` to `0.95` works well for many apps, but the right value de
 > A high threshold means fewer matches but safer answers. A low threshold means more matches but a higher chance of a wrong answer.
 
 **Note:** Never share a semantic cache across tenants or users when the answer depends on private data. "What is my account balance?" must never be served from someone else's cache entry.
+
+A few more pitfalls to watch for with semantic cache:
+
+- **Staleness:** A cached answer can go out of date ("the latest iPhone", prices, news). Give entries a TTL or invalidate them on updates - a semantic cache needs expiry just like any other cache.
+- **Negation and entity sensitivity:** Similarity alone cannot reliably tell "capital of France" from "what is **not** the capital of France," or "2024 revenue" from "2025 revenue." Small wording changes that flip the correct answer can still score as a match, and no threshold fully fixes this.
+- **Best fit:** Semantic caching suits FAQ-style, stable-answer workloads. It is a poor fit for personalized or real-time answers.
+- **Tooling:** Common implementations include [GPTCache](https://github.com/zilliztech/GPTCache) and Redis semantic caching (LangCache).
 
 ### Embedding Cache
 
