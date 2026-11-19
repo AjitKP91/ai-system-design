@@ -456,11 +456,13 @@ Now, we know which inference engine to use based on our use case.
 The inference engine is the software. But the software runs on a chip, and the chip decides a lot of our speed and our cost. So, before jumping into latency, we must know the three chips that come up again and again in AI System Design.
 
 - A **CPU** is a general worker. It can do almost anything, but it does only a few things at a time.
-- A **[GPU](https://outcomeschool.com/blog/how-does-a-gpu-work-for-deep-learning)** is a huge team of workers. It was made for graphics, and later we found that it is also very good at the heavy parallel math that machine learning needs. This is why NVIDIA powers almost all of modern AI.
+- A **[GPU](https://outcomeschool.com/blog/how-does-a-gpu-work-for-deep-learning)** is a huge team of workers. It was made for graphics, and later we found that it is also very good at the heavy parallel math that machine learning needs. This is why NVIDIA GPUs still run the majority of AI workloads today, though AMD Instinct, Google TPUs, and cloud ASICs like AWS Trainium now take a growing share.
 - A **[TPU](https://outcomeschool.com/blog/how-does-a-google-tpu-work)** (Tensor Processing Unit) is Google's own chip built for one main job: doing the math that machine learning needs, and doing it very fast. **TPU = Tensor + Processing + Unit**, where a tensor is just a grid of numbers.
 - An **[LPU](https://outcomeschool.com/blog/how-does-an-lpu-work)** (Language Processing Unit) is a specialist chip, introduced by Groq, built for one single job: running a large language model that is already trained, and producing text as fast as possible.
 
-Here, the most important lesson is this: **while an LLM writes the answer, the bottleneck is memory, not math.** To produce every single token, the chip must read the full model weights from memory. A GPU keeps the weights in HBM (High Bandwidth Memory), which sits next to the chip. An LPU keeps the weights in SRAM, inside the chip itself, so the data does not have to travel.
+Here, the most important lesson is this: **when an LLM writes the answer one token at a time, the bottleneck is usually memory, not math.** To produce every single token, the chip must read the full model weights from memory. A GPU keeps the weights in HBM (High Bandwidth Memory), which sits next to the chip. An LPU keeps the weights in SRAM, inside the chip itself, so the data does not have to travel.
+
+This is only half the picture, though. LLM inference has two phases with opposite bottlenecks. **Reading the prompt (prefill)** processes all tokens in parallel and does a lot of math, so it is **compute-bound**. **Generating the answer (decode)** produces one token at a time and mostly re-reads weights from memory, so it is **memory-bandwidth-bound** - this is the regime described above. And **batching many users together** amortizes one weight read across many tokens, which pushes decode back toward compute-bound. This is exactly why GPUs batch requests to stay efficient, while an LPU bets on ultra-fast on-chip memory to win on single-user latency without batching.
 
 Let me tabulate the differences between a GPU and an LPU for your better understanding.
 
@@ -468,13 +470,15 @@ Let me tabulate the differences between a GPU and an LPU for your better underst
 | ----------------------- | ----------------------------------------- | ---------------------------------------- |
 | Built for               | Any parallel math, training and inference | Running a trained language model         |
 | Where the weights live  | HBM, next to the chip                     | SRAM, inside the chip                    |
-| Memory speed            | Around 3 TB per second                    | Around 80 TB per second                  |
+| Memory speed            | ~3.3 TB/s (H100); 4.8 TB/s (H200); ~8 TB/s (Blackwell B200) | Around 80 TB per second                  |
 | Memory size per chip    | Tens of GB                                | Around 230 MB                            |
 | Chips for a large model | A few                                     | Hundreds                                 |
 | Speed for a single user | Moderate                                  | Very high                                |
-| Batching                | Needed to get good total output           | Not needed to get good speed             |
+| Batching                | Batches requests to stay efficient (great throughput) | Skips batching to minimize single-user latency |
 | Training support        | Yes                                       | No                                       |
-| Flexibility             | Very high                                 | Low, everything is planned ahead of time |
+| Flexibility             | Runs any model or workload                | Optimized for a fixed, deployed model; far less flexible |
+
+One caveat the table hides: because on-chip SRAM is tiny (~230 MB per LPU chip), a real model has to be split across *hundreds* of LPU chips wired together, whereas a handful of GPUs is enough. For example, SemiAnalysis reported that serving Mixtral 8x7B on Groq took **576 chips**. So an LPU wins on single-user latency, but not necessarily on cost per token at low volume.
 
 So, based on our use case:
 
@@ -483,6 +487,28 @@ So, based on our use case:
 - **Use an LPU** when the model is fixed and already trained, and the speed of the answer is what our users actually feel. Chat, voice, agents, and reasoning models fall in this bucket.
 
 The bigger lesson goes beyond one chip. Once a workload becomes memory bound, the win comes from moving data less, not from computing more. We will see this same idea again in prefill vs decode, KV Cache, and [Flash Attention](https://outcomeschool.com/blog/decoding-flash-attention).
+
+### Other Accelerators Worth Knowing
+
+GPU, TPU, and LPU are the three to understand first, but the 2026 landscape has a dense middle. At a glance:
+
+- **AMD Instinct (MI300X / MI325X / MI350 series):** NVIDIA's main training-and-inference rival, with the most memory per chip (192 GB → 256 GB → 288 GB HBM3e). The real alternative when you want a drop-in GPU that is not NVIDIA.
+- **AWS Trainium and Inferentia:** Amazon's in-house ASICs (Trainium for training, Inferentia for inference). Trainium2 runs Anthropic's Claude. Cloud-only and cost-driven.
+- **Cerebras Wafer-Scale Engine (WSE-3):** an entire silicon wafer as one chip, with tens of GB of on-wafer SRAM at petabyte-per-second bandwidth. It is the LPU "keep everything in SRAM" idea taken to the extreme, now also a very fast inference service.
+- **Google TPU, Intel Gaudi 3, SambaNova, Apple Silicon + MLX:** more options for cloud training/inference, cheaper NVIDIA alternatives, and on-device/local inference respectively.
+- **Newer NVIDIA (H200, B200/Blackwell, GB200):** the current generation. H200 reaches 4.8 TB/s and Blackwell B200 around 8 TB/s of memory bandwidth, well above the H100's 3.3 TB/s.
+
+For a fuller comparison table and the deeper "why" behind memory-bound vs compute-bound inference (arithmetic intensity, the roofline model, and KV-cache capacity limits), see the companion page: **[AI Hardware and the 2026 Accelerator Landscape](docs/ai-hardware-and-accelerators.md)**.
+
+### Keeping the Expensive GPU Busy
+
+The flip side of an expensive chip is the cost of letting it sit idle. A few common ways to avoid paying for idle silicon:
+
+- **Serverless / on-demand GPU endpoints:** pay per second of use with zero idle cost. Best for spiky or low traffic.
+- **Spot / preemptible instances:** 60-90% cheaper capacity that can be reclaimed. Good for fault-tolerant batch jobs and training checkpoints.
+- **MIG / fractional GPUs:** partition one physical GPU (an H100 splits into up to 7 instances) so a small model does not strand a whole card.
+- **Inference APIs / LPU-as-a-service (e.g., GroqCloud):** rent per-token inference instead of owning silicon; the provider eats the idle time.
+- **Batch vs real-time tiers:** send latency-insensitive work to high-batch, high-utilization queues (cheap), and reserve low-latency capacity only for interactive traffic.
 
 ## Tokens, Latency, and Throughput
 
