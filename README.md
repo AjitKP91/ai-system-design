@@ -1816,7 +1816,7 @@ A good embedding pipeline is incremental. It only processes what is new or chang
 
 Now, let's pick the right embedding model. We have a detailed blog on [How does an embedding model work?](https://outcomeschool.com/blog/embedding-model) that explains how it turns text into a vector. The embedding model decides the quality of our retrieval. A bad embedding model means even the best vector DB returns junk. Common production options in 2026:
 
-- **Voyage AI (Voyage 4 Large):** Currently near the top of the leaderboard for English RAG quality. Uses a Mixture-of-Experts (MoE) architecture, which keeps serving cost meaningfully lower than comparable dense models. Most serious RAG teams move to Voyage when retrieval quality matters more than cost.
+- **Voyage AI (Voyage 4 Large):** Currently near the top of the [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard) (the standard benchmark for embedding quality) for English RAG. Uses a Mixture-of-Experts (MoE) architecture, which keeps serving cost meaningfully lower than comparable dense models. Most serious RAG teams move to Voyage when retrieval quality matters more than cost.
 - **OpenAI (text-embedding-3-small / 3-large):** Cheap, simple, and good enough for most apps. text-embedding-3-small is the cheapest viable option from a major provider at $0.02 per million tokens.
 - **Cohere (embed-v4):** Strong multilingual support across 100+ languages. Now multimodal (text + images), so we can embed text and images into the same space. Has task-typed embeddings (search query, search document, classification, clustering) that let us optimize for our specific task. Also supports Matryoshka dimensions out of the box.
 - **Gemini Embedding 2:** Natively multimodal (text, images, video, audio, and PDFs all map into one shared embedding space). Strong quality, well-priced, default 3072-dim with truncation support down to 768 / 1536.
@@ -1824,9 +1824,11 @@ Now, let's pick the right embedding model. We have a detailed blog on [How does 
 
 ### Matryoshka Embeddings
 
-A useful trick worth knowing. **Matryoshka embeddings** are trained so that we can truncate them to a smaller dimension without retraining. So we can store the full 3072-dimensional embedding once, but at query time use only the first 256 or 512 dimensions for a fast first-pass search, and then re-rank with the full vector.
+A useful trick worth knowing. **Matryoshka embeddings** come from models the provider has pre-trained with [Matryoshka Representation Learning](https://arxiv.org/abs/2205.13147) (Kusupati et al., 2022), which packs the most important information into the earliest dimensions. Because of that training, *we* (no retraining on our side) can store the full 3072-dimensional vector once and, at query time, compare using only the first 256 or 512 dimensions for a fast first pass, then re-rank the top candidates with the full vector. One catch: when we truncate, we must **re-normalize** the shortened vector to unit length before computing similarity. And this only works for models trained with MRL - truncating an ordinary embedding destroys its quality.
 
-This gives us a memory-vs-quality knob without having to maintain two embedding models. OpenAI text-embedding-3 and Cohere both support this.
+This gives us a memory-vs-quality knob without having to maintain two embedding models. OpenAI text-embedding-3, Cohere, and Gemini embeddings all support this.
+
+One more production detail: keep the similarity metric (cosine vs dot product) consistent between index build and query, and normalize vectors the way the model expects. When we do need to switch embedding models, do a **blue/green reindex** - build the new index alongside the old one, backfill it, then switch reads over atomically - so "re-embed everything" never means taking the system down.
 
 A good rule: pick the embedding model based on the task type, the language, the budget, and the privacy needs. Switching the embedding model means re-embedding everything, so this decision has gravity.
 
