@@ -159,6 +159,7 @@
   - [Coordination Patterns](#coordination-patterns)
   - [AI SubAgents](#ai-subagents)
   - [Trade-offs](#trade-offs)
+  - [The Multi-Agent Debate (When It Is Worth It)](#the-multi-agent-debate-when-it-is-worth-it)
   - [A2A (Agent2Agent Protocol)](#a2a-agent2agent-protocol)
   - [How A2A works](#how-a2a-works)
   - [How MCP and A2A fit together](#how-mcp-and-a2a-fit-together)
@@ -2480,13 +2481,13 @@ We need SubAgents for four reasons:
 - **Reusability:** A "web search SubAgent" can be reused by a research agent, a news agent, and a shopping agent.
 - **Parallel work:** While one SubAgent finds flights, another checks hotels.
 
-The flow is simple. The main agent breaks the task into pieces, sends each piece to the matching SubAgent, each SubAgent runs its own loop with its own tools and budget, and the main agent combines the results into the final answer.
+The flow is simple. The main agent breaks the task into pieces, sends each piece to the matching SubAgent, each SubAgent runs its own loop with its own tools and budget, and the main agent combines the results into the final answer. A SubAgent's fresh context is double-edged: it keeps each context clean, but it also means SubAgents cannot see each other's decisions, so keep parallel SubAgents to independent, read-only work.
 
 **Note:** A SubAgent can call another SubAgent, which gives us a tree-like structure. This is very powerful but must be used carefully to avoid deep, costly chains.
 
 ### Trade-offs
 
-Multi-agent systems are more powerful for complex tasks, but they cost more in latency, tokens, and debugging effort. Common mistakes include agents talking too much without making progress, error propagation across agents, and runaway critic loops that never converge.
+Multi-agent systems are more powerful for complex tasks, but they cost more in latency, tokens, and debugging effort (Anthropic found their multi-agent research system used about 15x the tokens of a plain chat). Common mistakes include agents talking too much without making progress, error propagation across agents, and runaway critic loops that never converge.
 
 Let me tabulate the differences between a Single Agent and a Multi-Agent System for your better understanding so that you can decide which one to use based on your use case.
 
@@ -2505,13 +2506,21 @@ Let me tabulate the differences between a Single Agent and a Multi-Agent System 
 
 The rule of thumb is simple: **start with a single agent. Move to multi-agent only when the single agent clearly cannot do the job. When we do, add the smallest number of agents that solves the problem.**
 
+### The Multi-Agent Debate (When It Is Worth It)
+
+There is a real industry debate here worth knowing. On one side, Anthropic found multi-agent systems genuinely win on some tasks: an orchestrator with parallel subagents beat a single agent by a wide margin on open-ended research, because the work is **breadth-first** (many independent directions at once) and exceeds a single context window. The catch is cost - they report agents use roughly 4x the tokens of a chat, and multi-agent systems about **15x** - so it only pays off for high-value, parallelizable tasks.
+
+On the other side, Cognition (the team behind Devin) argues in "Don't Build Multi-Agents" that splitting work across agents with **separate contexts** is dangerous: subagents cannot see each other's decisions, so they make conflicting assumptions and produce inconsistent output. Their advice is to prefer a **single-threaded agent with one continuous, shared context**, and to share full agent traces (not just final messages) when you must split.
+
+These reconcile cleanly: reach for multiple agents when the subtasks are **truly independent and read-only** (research, breadth-first search); stay with a single thread when the subtasks are **tightly coupled** and later steps depend on earlier decisions (most coding and editing).
+
 Frameworks like LangGraph and AutoGen handle much of the wiring, so we do not have to build the orchestration layer from scratch.
 
 ### A2A (Agent2Agent Protocol)
 
 Now, let's see what happens when agents cross organizational boundaries. When all our agents live in the same codebase and use the same framework, communication is easy. But what if our agents are built by different teams, in different frameworks, by different vendors? How do they talk to each other?
 
-So, here comes **A2A (Agent2Agent Protocol)** to the rescue. A2A is an open standard introduced by Google in 2025 (now under the Linux Foundation) for cross-vendor agent communication. More than 50 companies (Atlassian, Cohere, Salesforce, SAP, Workday, etc.) support it.
+So, here comes **A2A (Agent2Agent Protocol)** to the rescue. A2A is an open standard introduced by Google in April 2025 and donated to the Linux Foundation in June 2025 (now at the v1.0 spec) for cross-vendor agent communication. It launched with 50+ companies and now has 100+ partners (Atlassian, Cohere, Salesforce, SAP, Workday, and more).
 
 Simply put, **A2A is a standard way for one agent to talk to another agent, even if they are built by different teams or vendors.**
 
@@ -2526,7 +2535,7 @@ Each A2A agent publishes an **Agent Card**, which is a small JSON document descr
 - The endpoint to connect to
 - The authentication and streaming modes it supports
 
-Other agents discover the Agent Card, decide if this agent is the right one for the task, and then send a request using **JSON-RPC over HTTP** (a simple way to call a function on another machine by sending a small JSON message that names the function and its arguments).
+Other agents discover the Agent Card, decide if this agent is the right one for the task, and then send a request using **JSON-RPC over HTTP** (a simple way to call a function on another machine by sending a small JSON message that names the function and its arguments). The v1.0 spec also allows gRPC and plain HTTP+JSON/REST transports, but JSON-RPC over HTTP is the common one.
 
 A2A supports three interaction modes:
 
