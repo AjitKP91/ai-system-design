@@ -2257,9 +2257,9 @@ AI Agent Memory is not a single thing. It is a stack of layers, each with a diff
 
 **Layer 2 - Short-Term Memory.** This is the scratchpad the agent uses during one task or session. It holds the plan, the current step, and the intermediate results. When the session ends, this memory is usually gone.
 
-**Layer 3 - Long-Term Memory.** This is the persistent memory that survives across conversations and sessions. It stores user facts, preferences, past conversation summaries, and learned behaviors. This is what makes the agent feel like it "knows" the user. Within Long-Term Memory, there are further sub-types - **episodic** (past experiences), **semantic** (facts and concepts), and **procedural** (how to do things).
+**Layer 3 - Long-Term Memory.** This is the persistent memory that survives across conversations and sessions. It stores user facts, preferences, past conversation summaries, and learned behaviors. This is what makes the agent feel like it "knows" the user. Within Long-Term Memory, there are further sub-types - **episodic** (past experiences), **semantic** (facts and concepts), and **procedural** (how to do things) - a framing from cognitive science applied to agents by the [CoALA framework](https://arxiv.org/abs/2309.02427) (Sumers et al., 2023).
 
-**Layer 4 - External Knowledge.** This is everything the agent can query but does not maintain - documents, databases, APIs, the web. The agent reads from these sources but does not write back to them as its own memory.
+**Layer 4 - External Knowledge.** This is everything the agent can query but does not maintain - documents, databases, APIs, the web. The agent typically queries these sources rather than maintaining them as its own memory, though some systems do write derived knowledge back.
 
 All four layers work together. The context window is the LLM's desk. Short-term memory is the notepad next to the desk. Long-term memory is the personal diary in the drawer. External knowledge is the library across the street. We want to keep our desk clean, our notepad organized, our diary trustworthy, and the library indexed.
 
@@ -2267,9 +2267,9 @@ All four layers work together. The context window is the LLM's desk. Short-term 
 
 No matter how many layers we have, every memory system does only four things:
 
-**1. Write.** Save new information. After the user says "I prefer code in Go", we write "preferred language: Go" to long-term memory.
+**1. Write.** Save new information. After the user says "I prefer code in Go", we write "preferred language: Go" to long-term memory. In practice the memories are not raw messages - on write, an LLM extracts the salient facts and consolidates and deduplicates them against what is already stored (this is how Mem0 works; Zep builds a temporal knowledge graph so facts can be updated as they change over time).
 
-**2. Read.** Pull relevant information back when needed. This is usually the hardest part. We do not want everything, only what matters right now.
+**2. Read.** Pull relevant information back when needed. This is usually the hardest part. We do not want everything, only what matters right now. In practice Read is semantic search over a vector store, often refined by a weighted score - the canonical approach from the Generative Agents paper ranks memories by **recency** (newer scores higher), **importance** (an LLM rates each memory's significance), and **relevance** (embedding similarity to the current query), then retrieves the top results.
 
 **3. Update.** Modify existing memories when new information contradicts them. If the user's favorite language was Python last month and is now Go, the memory must be updated.
 
@@ -2360,6 +2360,8 @@ One of the biggest mistakes is storing too much.
 In simple words:
 
 **Store what will matter next week. Skip what only matters for the next minute.**
+
+And always **scope long-term memory per user** (and per tenant). One user's memories must never leak into another user's prompt - this is both a correctness and a privacy requirement.
 
 Tools like Mem0, Letta (formerly MemGPT), and Zep are built specifically to manage agent memory.
 
