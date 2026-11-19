@@ -321,7 +321,8 @@ flowchart TD
     J --> K[Guardrails, Safety, and Privacy]
     K --> L[Observability and Evaluation]
     L --> M[Cost, Fine-Tuning, and Inference Optimization]
-    M --> N[How to Solve Any AI System Design Problem]
+    M --> N[Reliability: Fault Tolerance and Multi-Tenancy]
+    N --> O[How to Solve Any AI System Design Problem]
 ```
 
 I am **Amit Shekhar**, Founder @ [Outcome School](https://outcomeschool.com), I have taught and mentored many developers, and their efforts landed them high-paying tech jobs, helped many tech companies in solving their unique problems, and created many open-source libraries being used by top companies. I am passionate about sharing knowledge through open-source, blogs, and videos.
